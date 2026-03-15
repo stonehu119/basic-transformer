@@ -11,7 +11,7 @@ from os import sys
 import random
 import numpy as np
 
-class MusicModel(L.LightningModule):
+class MidiGenerator(L.LightningModule):
   def __init__(self):
     print("hi")
     # stuff
@@ -46,4 +46,3 @@ class MusicModel(L.LightningModule):
   
   def predict_step(self, batch_iterator, batch_idx):
     return
-  
