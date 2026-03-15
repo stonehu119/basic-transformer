@@ -126,12 +126,6 @@ def main() -> None:
         default=None,
         help="Path to save tokenizer params (e.g. tokenizer.json).",
     )
-    parser.add_argument(
-        "--chunks-dir",
-        type=Path,
-        default=None,
-        help="Directory to save/load MIDI chunks. Default: <data_dir>/_chunks.",
-    )
     args = parser.parse_args()
 
     cache_dir = args.cache_dir or Path("data")
