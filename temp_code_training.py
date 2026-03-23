@@ -1,6 +1,7 @@
 
 from miditok import REMI
 from pathlib import Path
+from random import shuffle
 
 from miditok.pytorch_data import DataCollator, DatasetMIDI
 from miditok.utils import split_files_for_training
@@ -16,7 +17,7 @@ def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
 def prepare_dataloaders(
     midi_paths: list[Path],
     tokenizer: REMI,
-    max_seq_len: int = 1024,
+    max_seq_len: int = 1025,
     chunks_dir: Path | None = None,
     batch_size: int = 32,
     num_workers: int = 0,
@@ -30,12 +31,11 @@ def prepare_dataloaders(
     import torch
     from torch.utils.data import random_split
 
-    if chunks_dir is None:
-        chunks_dir = Path(midi_paths[0]).parent / "_chunks"
-    chunks_dir = Path(chunks_dir)
-    chunks_dir.mkdir(parents=True, exist_ok=True)
+    chunks_dir = Path("data/chunks")
 
-    chunk_paths = list(chunks_dir.glob("**/*.mid"))
+    shuffle(midi_paths)
+
+    chunk_paths = list(chunks_dir.glob("**/*.midi"))
     if not chunk_paths:
         print(f"Splitting {len(midi_paths)} MIDIs into chunks (max_seq_len={max_seq_len})...")
         split_files_for_training(
@@ -44,7 +44,7 @@ def prepare_dataloaders(
             save_dir=chunks_dir,
             max_seq_len=max_seq_len,
         )
-        chunk_paths = sorted(chunks_dir.rglob("*.mid"))
+        chunk_paths = sorted(chunks_dir.rglob("*.midi"))
     else:
         print(f"Using existing {len(chunk_paths)} chunk files in {chunks_dir}")
 
@@ -97,3 +97,21 @@ def prepare_dataloaders(
     )
 
     return train_loader, val_loader, tokenizer
+
+if __name__ == "__main__":
+    tokenizer = REMI(params=Path("tokenizer.json"))
+    train_loader, test_loader, _ = prepare_dataloaders(
+        midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
+        tokenizer = tokenizer
+    )
+    batch = next(iter(train_loader))
+    input_ids = batch["input_ids"]
+    labels = batch["labels"]
+    print(f"Batch input_ids shape: {input_ids.shape}")
+    print(f"Batch labels shape: {labels.shape}")
+    # With shift_labels=True, labels[:, t] == input_ids[:, t+1]; padding in labels is -100
+    labels_prev = labels[:, :-1]  # (B, T-1)
+    targets = input_ids[:, 1:]   # (B, T-1)
+    assert ((labels_prev == targets) | (labels_prev == -100)).all(), "labels should be shifted input_ids (or -100)"
+    print("Labels are shifted input_ids (autoregressive). OK.")
+    print(f"Vocab size for model: {len(tokenizer)}")
