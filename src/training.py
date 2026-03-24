@@ -100,6 +100,7 @@ def prepare_dataloaders(
 
 if __name__ == "__main__":
     tokenizer = REMI(params=Path("tokenizer.json"))
+    # test_tokenize_process(tokenizer=tokenizer)
     train_loader, test_loader, _ = prepare_dataloaders(
         midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
         tokenizer = tokenizer

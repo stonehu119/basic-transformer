@@ -11,9 +11,15 @@ from os import sys
 import random
 import numpy as np
 
-class MidiGenerator(L.LightningModule):
+class AttnBlock(L.LightningModule):
   def __init__(self):
-    print("hi")
+    self.Q = nn.Parameter() # continue here next
+
+class MidiGenerator(L.LightningModule):
+  def __init__(self, vocab_size = 1024, context_size = 512, model_dim = 256):
+    self.embedding = nn.Embedding(vocab_size, model_dim)
+    self.positional = nn.Embedding(context_size, model_dim)
+    
     # stuff
   
   def forward(self, input):
@@ -21,7 +27,7 @@ class MidiGenerator(L.LightningModule):
     return output
   
   def configure_optimizers(self):
-    optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
     return [optimizer], [scheduler]
 
