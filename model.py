@@ -11,9 +11,25 @@ from os import sys
 import random
 import numpy as np
 
-class AttnBlock(L.LightningModule):
-  def __init__(self):
-    self.Q = nn.Parameter() # continue here next
+class AttnHead(nn.Module):
+  def __init__(self, model_dim = 256, attn_dim = 64):
+    super().__init__()
+    self.Wq = nn.Linear(model_dim, attn_dim, bias=False)
+    self.Wk = nn.Linear(model_dim, attn_dim, bias=False)
+    self.Wv = nn.Linear(model_dim, attn_dim, bias=False)
+    self.attn_dim = attn_dim
+  
+  def forward(self, x, mask=None):
+    Q = self.Wq(x)
+    K = self.Wk(x)
+    V = self.Wv(x)
+    
+    attn_scores = Q @ K.transpose(-1, -2) / torch.sqrt(self.attn_dim)
+    if mask is not None:
+      attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+    
+    queries = F.softmax(attn_scores, dim=1)
+    return queries @ V, queries
 
 class MidiGenerator(L.LightningModule):
   def __init__(self, vocab_size = 1024, context_size = 512, model_dim = 256):
