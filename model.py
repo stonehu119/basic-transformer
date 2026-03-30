@@ -28,8 +28,20 @@ class AttnHead(nn.Module):
     if mask is not None:
       attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
     
-    queries = F.softmax(attn_scores, dim=1)
-    return queries @ V, queries
+    weights = F.softmax(attn_scores, dim=1)
+    return weights @ V, weights
+
+class MultiHeadAttn(nn.Module):
+  def __init__(self, model_dim = 256, attn_dim = 64, num_heads = 4):
+    super().__init__()
+    self.attn_heads = nn.ModuleList([
+      AttnHead(model_dim=model_dim, attn_dim=attn_dim) for _ in range(num_heads)
+    ])
+    self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
+  
+  def forward(self, input):
+    return input # continue here next
+
 
 class MidiGenerator(L.LightningModule):
   def __init__(self, vocab_size = 1024, context_size = 512, model_dim = 256):
@@ -39,8 +51,8 @@ class MidiGenerator(L.LightningModule):
     # stuff
   
   def forward(self, input):
-    output = torch.zeros(1)
-    return output
+    batch_size, token_dim = input.shape
+    return input
   
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
