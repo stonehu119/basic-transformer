@@ -18,36 +18,63 @@ class AttnHead(nn.Module):
     self.Wk = nn.Linear(model_dim, attn_dim, bias=False)
     self.Wv = nn.Linear(model_dim, attn_dim, bias=False)
     self.attn_dim = attn_dim
-  
-  def forward(self, x, mask=None):
-    Q = self.Wq(x)
-    K = self.Wk(x)
-    V = self.Wv(x)
-    
+
+  def forward(self, input, mask=None):
+    Q = self.Wq(input)
+    K = self.Wk(input)
+    V = self.Wv(input)
+
     attn_scores = Q @ K.transpose(-1, -2) / torch.sqrt(self.attn_dim)
     if mask is not None:
       attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
-    
+
     weights = F.softmax(attn_scores, dim=1)
     return weights @ V, weights
 
 class MultiHeadAttn(nn.Module):
-  def __init__(self, model_dim = 256, attn_dim = 64, num_heads = 4):
+  def __init__(self, model_dim = 256, num_heads = 4):
     super().__init__()
-    self.attn_heads = nn.ModuleList([
-      AttnHead(model_dim=model_dim, attn_dim=attn_dim) for _ in range(num_heads)
-    ])
+    assert model_dim % num_heads == 0
+    self.head_dim = model_dim // num_heads
+    self.attn_heads = nn.ModuleList(
+      [AttnHead(model_dim=model_dim, attn_dim=self.head_dim) for _ in range(num_heads)]
+    )
     self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
-  
+
+  def forward(self, input, mask = None):
+    head_outputs, head_weights = zip(*[attn_head(input, mask) for attn_head in self.attn_heads])
+    out = torch.cat(head_outputs, dim=-1)
+    weights = torch.stack(head_weights, dim=-1)
+    return self.out_layer(out), weights
+
+class TransformerBlock(nn.Module):
+  def __init__(self):
+    super().__init__()
+
   def forward(self, input):
-    return input # continue here next
+    return
 
-
-class MidiGenerator(L.LightningModule):
-  def __init__(self, vocab_size = 1024, context_size = 512, model_dim = 256):
+class MidiGenerator(nn.Module):
+  def __init__(self, vocab_size = 30000, context_size = 512, model_dim = 256, num_layers = 4):
+    super().__init__()
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
-    
+    self.multiHeadAttn = nn.ModuleList([MultiHeadAttn(model_dim=model_dim) for _ in range(num_layers)])
+    self.output = nn.Linear(model_dim, vocab_size, bias=False)
+    self.output.weight = self.embedding.weight
+  
+  def forward(self, input):
+    batch_size, seq_len = input.shape
+    embeddings = self.embedding(input)
+    position_offsets = torch.arange(seq_len).unsqueeze(0)
+    positionals = embeddings + self.positional(position_offsets)
+
+
+
+class MidiLightningModule(L.LightningModule):
+  def __init__(self, vocab_size = 30000, context_size = 512, model_dim = 256):
+    self.embedding = nn.Embedding(vocab_size, model_dim)
+    self.positional = nn.Embedding(context_size, model_dim)
     # stuff
   
   def forward(self, input):
