@@ -61,7 +61,7 @@ def build_tokenizer(
     use_chords: bool = True,
     use_programs: bool = False,
     train_bpe: bool = True,
-    bpe_vocab_size: int = 10000,
+    bpe_vocab_size: int = 5000,
     midi_paths: list[Path] | None = None,
     save_path: Path | None = None,
 ) -> REMI:

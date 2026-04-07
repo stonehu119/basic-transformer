@@ -1,15 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.models as models
-import pandas as pd
 import lightning as L
-from torch.utils.data import Dataset, DataLoader, random_split
-from torchvision import transforms
 from torchmetrics import R2Score
 from os import sys
-import random
-import numpy as np
 
 class AttnHead(nn.Module):
   def __init__(self, model_dim = 256, attn_dim = 64):
@@ -17,6 +11,7 @@ class AttnHead(nn.Module):
     self.Wq = nn.Linear(model_dim, attn_dim, bias=False)
     self.Wk = nn.Linear(model_dim, attn_dim, bias=False)
     self.Wv = nn.Linear(model_dim, attn_dim, bias=False)
+    self.dropout = nn.Dropout(p=0.1)
     self.attn_dim = attn_dim
 
   def forward(self, input, mask=None):
@@ -28,8 +23,9 @@ class AttnHead(nn.Module):
     if mask is not None:
       attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
 
-    weights = F.softmax(attn_scores, dim=1)
-    return weights @ V, weights
+    weights = F.softmax(attn_scores, dim=-1)
+    out = self.dropout(weights) @ V
+    return out, weights
 
 class MultiHeadAttn(nn.Module):
   def __init__(self, model_dim = 256, num_heads = 4):
@@ -40,51 +36,77 @@ class MultiHeadAttn(nn.Module):
       [AttnHead(model_dim=model_dim, attn_dim=self.head_dim) for _ in range(num_heads)]
     )
     self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
+    self.dropout = nn.Dropout(p=0.1)
 
   def forward(self, input, mask = None):
     head_outputs, head_weights = zip(*[attn_head(input, mask) for attn_head in self.attn_heads])
-    out = torch.cat(head_outputs, dim=-1)
+    out = self.out_layer(torch.cat(head_outputs, dim=-1))
     weights = torch.stack(head_weights, dim=-1)
-    return self.out_layer(out), weights
+    return self.dropout(out), weights
 
 class TransformerBlock(nn.Module):
-  def __init__(self):
+  def __init__(self, model_dim = 256):
     super().__init__()
+    self.mha = MultiHeadAttn(model_dim, num_heads=4)
+    self.ffn = nn.Sequential(
+      nn.Linear(in_features=model_dim, out_features=model_dim * 4),
+      nn.GELU(),
+      nn.Dropout(p=0.1),
+      nn.Linear(in_features=model_dim * 4, out_features=model_dim),
+      nn.Dropout(p=0.1),
+    )
+    self.norm1 = nn.LayerNorm(normalized_shape=model_dim)
+    self.norm2 = nn.LayerNorm(normalized_shape=model_dim)
 
   def forward(self, input):
-    return
+    # Pre LN block 1
+    norm_input = self.norm1(input)
+    attention = self.mha(norm_input)
+    input = attention + input
+
+    # Pre LN block 2
+    norm_input = self.norm2(input)
+    ffn = self.ffn(norm_input)
+    input = ffn + input
+    return input
 
 class MidiGenerator(nn.Module):
-  def __init__(self, vocab_size = 30000, context_size = 512, model_dim = 256, num_layers = 4):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
     super().__init__()
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
-    self.multiHeadAttn = nn.ModuleList([MultiHeadAttn(model_dim=model_dim) for _ in range(num_layers)])
+    self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim) for _ in range(num_layers)])
     self.output = nn.Linear(model_dim, vocab_size, bias=False)
     self.output.weight = self.embedding.weight
-  
+    self.causal_mask = 0
+
   def forward(self, input):
     batch_size, seq_len = input.shape
     embeddings = self.embedding(input)
     position_offsets = torch.arange(seq_len).unsqueeze(0)
-    positionals = embeddings + self.positional(position_offsets)
+    embeddings = embeddings + self.positional(position_offsets)
 
-
+    for block in self.transformers:
+      embeddings = block(embeddings)
+    
+    out = self.output(embeddings)
+    return out
 
 class MidiLightningModule(L.LightningModule):
-  def __init__(self, vocab_size = 30000, context_size = 512, model_dim = 256):
-    self.embedding = nn.Embedding(vocab_size, model_dim)
-    self.positional = nn.Embedding(context_size, model_dim)
-    # stuff
-  
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
+    self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
+
   def forward(self, input):
-    batch_size, token_dim = input.shape
-    return input
-  
+    return self.model(input)
+
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
     return [optimizer], [scheduler]
+
+  def on_train_start(self):
+    # set some training attribute here for self.model which causes it to apply a causal mask?
+    return
 
   def training_step(self, batch_iterator, batch_idx):
     loss = torch.zeros(1)
