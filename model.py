@@ -19,7 +19,7 @@ class AttnHead(nn.Module):
     K = self.Wk(input)
     V = self.Wv(input)
 
-    attn_scores = Q @ K.transpose(-1, -2) / torch.sqrt(self.attn_dim)
+    attn_scores = Q @ K.transpose(-1, -2) / (self.attn_dim ** 0.5)
     if mask is not None:
       attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
 
@@ -58,10 +58,10 @@ class TransformerBlock(nn.Module):
     self.norm1 = nn.LayerNorm(normalized_shape=model_dim)
     self.norm2 = nn.LayerNorm(normalized_shape=model_dim)
 
-  def forward(self, input):
+  def forward(self, input, mask=None):
     # Pre LN block 1
     norm_input = self.norm1(input)
-    attention = self.mha(norm_input)
+    attention, weights = self.mha(norm_input, mask)
     input = attention + input
 
     # Pre LN block 2
@@ -86,11 +86,16 @@ class MidiGenerator(nn.Module):
     position_offsets = torch.arange(seq_len).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
+    mask = self.generate_causal_mask(seq_len)
+
     for block in self.transformers:
-      embeddings = block(embeddings)
+      embeddings = block(embeddings, mask)
     
     out = self.output(embeddings)
     return out
+  
+  def generate_causal_mask(self, seq_len):
+    return torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0)
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
