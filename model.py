@@ -21,7 +21,7 @@ class AttnHead(nn.Module):
 
     attn_scores = Q @ K.transpose(-1, -2) / (self.attn_dim ** 0.5)
     if mask is not None:
-      attn_scores = attn_scores.masked_fill(mask == 0, float('-inf'))
+      attn_scores = attn_scores.masked_fill(~mask, float('-inf'))
 
     weights = F.softmax(attn_scores, dim=-1)
     out = self.dropout(weights) @ V
@@ -86,19 +86,21 @@ class MidiGenerator(nn.Module):
     position_offsets = torch.arange(seq_len).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
-    mask = self.generate_causal_mask(seq_len)
+    mask = self.generate_causal_mask(seq_len, input.device)
 
     for block in self.transformers:
       embeddings = block(embeddings, mask)
     
-    out = self.output(embeddings)
-    return out
+    logits = self.output(embeddings) # (B, T, vocab_size)
+    return logits 
   
-  def generate_causal_mask(self, seq_len):
-    return torch.tril(torch.ones(seq_len, seq_len)).unsqueeze(0)
+  def generate_causal_mask(self, seq_len, device):
+    mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
+    return mask.bool().unsqueeze(0)
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
+    self.vocab_size = vocab_size
     self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
 
   def forward(self, input):
@@ -113,8 +115,17 @@ class MidiLightningModule(L.LightningModule):
     # set some training attribute here for self.model which causes it to apply a causal mask?
     return
 
-  def training_step(self, batch_iterator, batch_idx):
-    loss = torch.zeros(1)
+  def training_step(self, batch, batch_idx):
+    input_token_batch = batch["input_ids"] # (B, T)
+    label_token_batch = batch["labels"] # (B, T)
+
+    logit_batch = self(input_token_batch) # (B, T, vocab_size)
+    
+    loss = F.cross_entropy( 
+      logit_batch.view(-1, self.vocab_size),
+      label_token_batch.view(-1) # apparently F.cross_entropy one hot encodes these already
+    )
+
     return loss
   
   def test_step(self, batch_iterator, batch_idx):
