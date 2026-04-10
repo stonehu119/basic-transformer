@@ -6,6 +6,11 @@ from random import shuffle
 from miditok.pytorch_data import DataCollator, DatasetMIDI
 from miditok.utils import split_files_for_training
 from torch.utils.data import DataLoader
+import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.loggers import TensorBoardLogger
+
+from model import MidiLightningModule
 
 def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
     """Return token id for the first candidate that exists in the tokenizer vocab."""
@@ -116,3 +121,32 @@ if __name__ == "__main__":
     assert ((labels_prev == targets) | (labels_prev == -100)).all(), "labels should be shifted input_ids (or -100)"
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
+
+    model = MidiLightningModule()
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss", 
+        dirpath="checkpoints/", 
+        filename="midi-transformer-{epoch:02d}-{val_loss:.2f}",
+        save_top_k=3, 
+        mode="min"
+    )
+    early_stop_callback = EarlyStopping(
+        monitor="val_loss", 
+        patience=5, 
+        verbose=True, 
+        mode="min"
+    )
+
+    trainer = L.Trainer(
+        max_epochs=100,
+        accelerator="auto", # Automatically detects GPU/CPU/MPS
+        devices=1,          # Use 1 GPU
+        precision="16-mixed", # Use Mixed Precision (FP16) to save memory and speed up
+        logger=TensorBoardLogger("lightning_logs/"),
+        callbacks=[checkpoint_callback, early_stop_callback],
+    )
+
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader)
+
+    
+

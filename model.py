@@ -108,7 +108,7 @@ class MidiLightningModule(L.LightningModule):
 
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-6)
     return [optimizer], [scheduler]
 
   def on_train_start(self):
@@ -126,13 +126,24 @@ class MidiLightningModule(L.LightningModule):
       label_token_batch.view(-1) # apparently F.cross_entropy one hot encodes these already
     )
 
+    self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
     return loss
-  
+
   def test_step(self, batch_iterator, batch_idx):
     return
   
-  def validation_step(self):
-    return
+  def validation_step(self, batch, batch_idx):
+    input_token_batch = batch["input_ids"]
+    label_token_batch = batch["labels"]
+
+    logit_batch = self(input_token_batch)
+    loss = F.cross_entropy( 
+      logit_batch.view(-1, self.vocab_size),
+      label_token_batch.view(-1)
+    )
+
+    self.log("val_loss", loss, prog_bar=True, on_epoch=True)
+    return loss
   
   def on_train_epoch_end(self):
     return
