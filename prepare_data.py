@@ -117,7 +117,7 @@ def main() -> None:
     parser.add_argument(
         "--bpe-vocab-size",
         type=int,
-        default=30000,
+        default=5000,
         help="Target vocab size when training BPE.",
     )
     parser.add_argument(

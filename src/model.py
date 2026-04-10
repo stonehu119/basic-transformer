@@ -100,6 +100,7 @@ class MidiGenerator(nn.Module):
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
+    super().__init__()
     self.vocab_size = vocab_size
     self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
 
