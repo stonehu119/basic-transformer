@@ -73,6 +73,7 @@ class TransformerBlock(nn.Module):
 class MidiGenerator(nn.Module):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
     super().__init__()
+    self.context_size = context_size
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
     self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim) for _ in range(num_layers)])
@@ -81,12 +82,11 @@ class MidiGenerator(nn.Module):
     self.causal_mask = 0
 
   def forward(self, input):
-    batch_size, seq_len = input.shape
     embeddings = self.embedding(input)
-    position_offsets = torch.arange(seq_len).unsqueeze(0)
+    position_offsets = torch.arange(self.context_size).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
-    mask = self.generate_causal_mask(seq_len, input.device)
+    mask = self.generate_causal_mask(self.context_size, input.device)
 
     for block in self.transformers:
       embeddings = block(embeddings, mask)
@@ -115,17 +115,21 @@ class MidiLightningModule(L.LightningModule):
   def on_train_start(self):
     # set some training attribute here for self.model which causes it to apply a causal mask?
     return
-
-  def training_step(self, batch, batch_idx):
+  
+  def _forward_loss(self, batch):
     input_token_batch = batch["input_ids"] # (B, T)
     label_token_batch = batch["labels"] # (B, T)
 
     logit_batch = self(input_token_batch) # (B, T, vocab_size)
     
     loss = F.cross_entropy( 
-      logit_batch.view(-1, self.vocab_size),
-      label_token_batch.view(-1) # apparently F.cross_entropy one hot encodes these already
+      logit_batch.reshape(-1, self.vocab_size),
+      label_token_batch.reshape(-1) # apparently F.cross_entropy one hot encodes these already
     )
+    return loss
+
+  def training_step(self, batch, batch_idx):
+    loss = self._forward_loss(batch)
 
     self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
     return loss
@@ -134,14 +138,7 @@ class MidiLightningModule(L.LightningModule):
     return
   
   def validation_step(self, batch, batch_idx):
-    input_token_batch = batch["input_ids"]
-    label_token_batch = batch["labels"]
-
-    logit_batch = self(input_token_batch)
-    loss = F.cross_entropy( 
-      logit_batch.view(-1, self.vocab_size),
-      label_token_batch.view(-1)
-    )
+    loss = self._forward_loss(batch)
 
     self.log("val_loss", loss, prog_bar=True, on_epoch=True)
     return loss

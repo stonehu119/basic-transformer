@@ -22,7 +22,7 @@ def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
 def prepare_dataloaders(
     midi_paths: list[Path],
     tokenizer: REMI,
-    max_seq_len: int = 1025,
+    max_seq_len: int = 513,
     chunks_dir: Path | None = None,
     batch_size: int = 32,
     num_workers: int = 0,
@@ -144,9 +144,7 @@ if __name__ == "__main__":
         precision="16-mixed", # Use Mixed Precision (FP16) to save memory and speed up
         logger=TensorBoardLogger("lightning_logs/"),
         callbacks=[checkpoint_callback, early_stop_callback],
+        fast_dev_run=True
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader)
-
-    
-
