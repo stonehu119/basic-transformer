@@ -5,6 +5,8 @@ import lightning as L
 from torchmetrics import R2Score
 from os import sys
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 class AttnHead(nn.Module):
   def __init__(self, model_dim = 256, attn_dim = 64):
     super().__init__()
@@ -83,7 +85,7 @@ class MidiGenerator(nn.Module):
 
   def forward(self, input):
     embeddings = self.embedding(input)
-    position_offsets = torch.arange(self.context_size).unsqueeze(0)
+    position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
     mask = self.generate_causal_mask(self.context_size, input.device)
