@@ -5,7 +5,8 @@ from random import shuffle
 
 from miditok.pytorch_data import DataCollator, DatasetMIDI
 from miditok.utils import split_files_for_training
-from torch.utils.data import DataLoader
+import torch
+from torch.utils.data import random_split, DataLoader
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -22,19 +23,13 @@ def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
 def prepare_dataloaders(
     midi_paths: list[Path],
     tokenizer: REMI,
-    max_seq_len: int = 513,
+    max_seq_len: int = 512,
     chunks_dir: Path | None = None,
     batch_size: int = 32,
     num_workers: int = 0,
     train_ratio: float = 0.9,
     seed: int = 42,
 ) -> tuple[DataLoader, DataLoader, REMI]:
-    """
-    Split MIDIs into chunks, build DatasetMIDI and DataLoaders with train/val split.
-    Returns (train_loader, val_loader, tokenizer).
-    """
-    import torch
-    from torch.utils.data import random_split
 
     chunks_dir = Path("data/chunks")
 
@@ -115,36 +110,35 @@ if __name__ == "__main__":
     labels = batch["labels"]
     print(f"Batch input_ids shape: {input_ids.shape}")
     print(f"Batch labels shape: {labels.shape}")
-    # With shift_labels=True, labels[:, t] == input_ids[:, t+1]; padding in labels is -100
-    labels_prev = labels[:, :-1]  # (B, T-1)
-    targets = input_ids[:, 1:]   # (B, T-1)
+    labels_prev = labels[:, :-1] # (B, T-1)
+    targets = input_ids[:, 1:] # (B, T-1)
     assert ((labels_prev == targets) | (labels_prev == -100)).all(), "labels should be shifted input_ids (or -100)"
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
     model = MidiLightningModule()
     checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss", 
-        dirpath="checkpoints/", 
+        monitor="val_loss",
+        dirpath="checkpoints/",
         filename="midi-transformer-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=3, 
+        save_top_k=3,
         mode="min"
     )
     early_stop_callback = EarlyStopping(
-        monitor="val_loss", 
-        patience=5, 
-        verbose=True, 
+        monitor="val_loss",
+        patience=5,
+        verbose=True,
         mode="min"
     )
 
     trainer = L.Trainer(
         max_epochs=100,
-        accelerator="auto", # Automatically detects GPU/CPU/MPS
-        devices=1,          # Use 1 GPU
-        precision="16-mixed", # Use Mixed Precision (FP16) to save memory and speed up
+        accelerator="auto",
+        devices=1,
+        precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
         callbacks=[checkpoint_callback, early_stop_callback],
-        fast_dev_run=True
+        # fast_dev_run=True
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader)

@@ -83,7 +83,7 @@ class MidiGenerator(nn.Module):
     self.causal_mask = 0
 
   def forward(self, input):
-    embeddings = self.embedding(input)
+    embeddings = self.embedding(input) # (B, T, model_dim)
     position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
@@ -93,8 +93,31 @@ class MidiGenerator(nn.Module):
       embeddings = block(embeddings, mask)
     
     logits = self.output(embeddings) # (B, T, vocab_size)
-    return logits 
+    return logits
   
+  @torch.no_grad()
+  def generate(self, input, max_len, eos_token_id=None):
+    B = input.size(0) # batch_size
+    assert B == 1
+    for _ in range(max_len):
+      cropped = input[0, -self.context_size:]
+      embeddings = self.embedding(cropped) # (1, T, model_dim)
+      position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
+      embeddings = embeddings + self.positional(position_offsets)
+      for block in self.transformers:
+        embeddings = block(embeddings)
+      
+      last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
+      logits = self.output(last_embedding)
+      probs = F.softmax(logits)
+      next_token = torch.multinomial(probs, num_samples=1)
+      input = torch.cat([input, next_token], dim=1)
+
+      if eos_token_id is not None and next_token.item() == eos_token_id:
+        break
+
+    return input
+
   def generate_causal_mask(self, seq_len, device):
     mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
     return mask.bool().unsqueeze(0)
