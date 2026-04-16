@@ -32,6 +32,7 @@ def prepare_dataloaders(
 ) -> tuple[DataLoader, DataLoader, REMI]:
 
     chunks_dir = Path("data/chunks")
+    max_seq_len += 1
 
     shuffle(midi_paths)
 

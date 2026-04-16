@@ -15,13 +15,13 @@ class AttnHead(nn.Module):
     self.dropout = nn.Dropout(p=0.1)
     self.attn_dim = attn_dim
 
-  def forward(self, input, mask=None):
-    Q = self.Wq(input)
-    K = self.Wk(input)
-    V = self.Wv(input)
+  def forward(self, input: torch.Tensor, mask=None):
+    Q: torch.Tensor = self.Wq(input)
+    K: torch.Tensor = self.Wk(input)
+    V: torch.Tensor = self.Wv(input) # all (B, T, attn_dim)
 
-    attn_scores = Q @ K.transpose(-1, -2) / (self.attn_dim ** 0.5)
-    if mask is not None:
+    attn_scores: torch.Tensor = Q @ K.transpose(-1, -2) / (self.attn_dim ** 0.5) # (B, T, T)
+    if mask is not None: # mask is (B, T, T)
       attn_scores = attn_scores.masked_fill(~mask, float('-inf'))
 
     weights = F.softmax(attn_scores, dim=-1)
@@ -59,7 +59,7 @@ class TransformerBlock(nn.Module):
     self.norm1 = nn.LayerNorm(normalized_shape=model_dim)
     self.norm2 = nn.LayerNorm(normalized_shape=model_dim)
 
-  def forward(self, input, mask=None):
+  def forward(self, input, mask=None) -> torch.Tensor:
     # Pre LN block 1
     norm_input = self.norm1(input)
     attention, weights = self.mha(norm_input, mask)
@@ -82,16 +82,16 @@ class MidiGenerator(nn.Module):
     self.output.weight = self.embedding.weight
     self.causal_mask = 0
 
-  def forward(self, input):
+  def forward(self, input: torch.Tensor, attention_mask = None) -> torch.Tensor:
     embeddings = self.embedding(input) # (B, T, model_dim)
     position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
-    mask = self.generate_causal_mask(self.context_size, input.device)
+    mask = self.apply_mask(self.context_size, attention_mask, input.device)
 
     for block in self.transformers:
       embeddings = block(embeddings, mask)
-    
+
     logits = self.output(embeddings) # (B, T, vocab_size)
     return logits
   
@@ -118,9 +118,19 @@ class MidiGenerator(nn.Module):
 
     return input
 
-  def generate_causal_mask(self, seq_len, device):
-    mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
-    return mask.bool().unsqueeze(0)
+  def apply_mask(self, seq_len, attention_mask: torch.Tensor, device) -> torch.Tensor:
+    causal_mask: torch.Tensor = torch.tril(torch.ones(seq_len, seq_len, device = device))
+    causal_mask = causal_mask.bool().unsqueeze(0) # (1, T, T)
+    if attention_mask == None: return causal_mask
+
+    B, T = attention_mask.shape
+    padding_mask = attention_mask.unsqueeze(1).to(torch.bool)  # (B, 1, T)
+    padding_mask = padding_mask.expand(B, T, T)
+
+    full_mask = padding_mask & causal_mask # (B, T, T)
+    print(f"full mask shape: {full_mask.shape}")
+
+    return full_mask
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
@@ -128,8 +138,8 @@ class MidiLightningModule(L.LightningModule):
     self.vocab_size = vocab_size
     self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
 
-  def forward(self, input):
-    return self.model(input)
+  def forward(self, input, attention_mask = None):
+    return self.model(input, attention_mask)
 
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
@@ -141,10 +151,13 @@ class MidiLightningModule(L.LightningModule):
     return
   
   def _forward_loss(self, batch):
+    # batch is a mapping from string to longtensor
+    # has three keys: [input_ids, labels, attention_mask]
     input_token_batch = batch["input_ids"] # (B, T)
     label_token_batch = batch["labels"] # (B, T)
+    attention_mask = batch["attention_mask"] # (B, T)
 
-    logit_batch = self(input_token_batch) # (B, T, vocab_size)
+    logit_batch = self(input_token_batch, attention_mask) # (B, T, vocab_size)
     
     loss = F.cross_entropy( 
       logit_batch.reshape(-1, self.vocab_size),
