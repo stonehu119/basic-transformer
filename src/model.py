@@ -108,8 +108,8 @@ class MidiGenerator(nn.Module):
         embeddings = block(embeddings)
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
-      logits = self.output(last_embedding)
-      probs = F.softmax(logits)
+      logits = self.output(last_embedding) # (1, 1, vocab_size)
+      probs = F.softmax(logits, dim=-1)
       next_token = torch.multinomial(probs, num_samples=1)
       input = torch.cat([input, next_token], dim=1)
 

@@ -2,7 +2,7 @@ import argparse
 
 from miditok import REMI, MusicTokenizer, TokSequence
 from pathlib import Path
-from model import MidiGenerator
+from model import MidiGenerator, MidiLightningModule
 import torch
 import numpy as np
 
@@ -54,9 +54,7 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  checkpoint = torch.load("checkpoints/midi-transformer-epoch=93-val_loss=4.79.ckpt")
-  weights = checkpoint["state_dict"]
-  model = MidiGenerator()
-  # model.load_state_dict(weights)
-  
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint("checkpoints/midi-transformer-epoch=93-val_loss=4.79.ckpt")
+  model = lightning_wrapper.model
+
   generate_from_midi(model, midi_path = "data/maestro_midi/maestro-v3.0.0/2009/MIDI-Unprocessed_20_R1_2009_01-05_ORIG_MID--AUDIO_20_R1_2009_20_R1_2009_01_WAV.midi")
