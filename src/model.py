@@ -128,7 +128,6 @@ class MidiGenerator(nn.Module):
     padding_mask = padding_mask.expand(B, T, T)
 
     full_mask = padding_mask & causal_mask # (B, T, T)
-    print(f"full mask shape: {full_mask.shape}")
 
     return full_mask
 
