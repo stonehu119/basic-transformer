@@ -9,28 +9,37 @@ import numpy as np
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def generate_from_midi(
-  model,
+  model: MidiGenerator,
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 1024,
+  max_tokens = 10000,
 ):
   torch.set_default_device(device)
   model.eval()
   tokens = load_and_tokenize(midi_path, tokenizer)
+  generated_tokens = model.generate(input = tokens, max_len = max_tokens, eos_token_id=tokenizer["EOS_None"])
+  save_tokens_to_file(generated_tokens, output_path, tokenizer)
 
 def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
-  tokenized_midi: TokSequence = tokenizer.encode(midi_path) # shape: (T)
-  # print(f"EOS token: {tokenizer["EOS"]}\nBOS token: {tokenizer["BOS"]}")
-  np.savetxt('token_stream.txt', tokenized_midi.ids)
-  eos_token_id = tokenizer["EOS"]
-  if tokenized_midi[-1] == eos_token_id:
-    tokenized_midi = tokenized_midi[:-1]
-  
-  tokenized_midi = tokenized_midi.unsqueeze(0) # shape: (1, T)
-  return tokenized_midi
+  tokenized_midi: list[TokSequence] = tokenizer.encode(midi_path)
 
-# def save_tokens_to_file(token_stream, output_path, tokenizer: MusicTokenizer):
+  # save tokenized sequence to file as a sanity check
+  with open("token_stream.txt", "w") as f:
+    f.write("\n".join(map(str, tokenized_midi[0].ids)))
+
+  out = torch.tensor(tokenized_midi)
+
+  # prepend BOS token to input sequence
+  bos_token = tokenizer["BOS_None"]
+  prepend = torch.full((1, 1), bos_token)
+  out = torch.cat([prepend, out], dim=1)
+
+  print(out.shape)
+  return out
+
+def save_tokens_to_file(token_stream, output_path, tokenizer: MusicTokenizer):
+  tokenizer.decode(token_stream, output_path)
 
 if __name__ == "__main__":
   torch.set_default_device(device)
@@ -45,7 +54,7 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  checkpoint = torch.load("checkpoints/midi-transformer-epoch=12-val_loss=5.77.ckpt")
+  checkpoint = torch.load("checkpoints/midi-transformer-epoch=93-val_loss=4.79.ckpt")
   weights = checkpoint["state_dict"]
   model = MidiGenerator()
   # model.load_state_dict(weights)
