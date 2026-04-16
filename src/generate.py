@@ -34,13 +34,19 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   bos_token = tokenizer["BOS_None"]
   prepend = torch.full((1, 1), bos_token)
   out = torch.cat([prepend, out], dim=1)
+  out = out[:, :4000]
 
   print(out.shape)
   return out
 
-def save_tokens_to_file(token_stream, output_path, tokenizer: MusicTokenizer):
-  print(token_stream.shape)
-  tokenizer.decode(token_stream, output_path)
+def save_tokens_to_file(token_stream: torch.Tensor, output_path, tokenizer: MusicTokenizer):
+  token_stream = token_stream[:, 1:-1]
+  token_stream = token_stream.squeeze(0).cpu().tolist()
+  token_sequence = TokSequence(ids=token_stream, are_ids_encoded=True)
+  tokenizer.decode_token_ids(token_sequence)
+  tokenizer.complete_sequence(token_sequence)
+  print(token_sequence.tokens[:5])
+  tokenizer.decode([token_sequence], programs=[(0, False)], output_path=output_path)
 
 if __name__ == "__main__":
   torch.set_default_device(device)
@@ -58,4 +64,4 @@ if __name__ == "__main__":
   lightning_wrapper = MidiLightningModule.load_from_checkpoint("checkpoints/midi-transformer-epoch=93-val_loss=4.79.ckpt")
   model = lightning_wrapper.model
 
-  generate_from_midi(model, midi_path = "data/maestro_midi/maestro-v3.0.0/2009/MIDI-Unprocessed_20_R1_2009_01-05_ORIG_MID--AUDIO_20_R1_2009_20_R1_2009_01_WAV.midi")
+  generate_from_midi(model, midi_path = "data/maestro_midi/maestro-v3.0.0/2009/MIDI-Unprocessed_02_R1_2009_03-06_ORIG_MID--AUDIO_02_R1_2009_02_R1_2009_05_WAV.midi")
