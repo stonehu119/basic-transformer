@@ -110,7 +110,7 @@ class MidiGenerator(nn.Module):
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
       probs = F.softmax(logits, dim=-1)
-      next_token = torch.multinomial(probs, num_samples=1)
+      next_token = torch.multinomial(probs, num_samples=1).reshape((1, 1))
       input = torch.cat([input, next_token], dim=1)
 
       if eos_token_id is not None and next_token.item() == eos_token_id:

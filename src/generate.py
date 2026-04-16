@@ -39,6 +39,7 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   return out
 
 def save_tokens_to_file(token_stream, output_path, tokenizer: MusicTokenizer):
+  print(token_stream.shape)
   tokenizer.decode(token_stream, output_path)
 
 if __name__ == "__main__":
