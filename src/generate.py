@@ -40,6 +40,7 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   return out
 
 def save_tokens_to_file(token_stream: torch.Tensor, output_path, tokenizer: MusicTokenizer):
+  print(token_stream.shape)
   token_stream = token_stream[:, 1:-1]
   token_stream = token_stream.squeeze(0).cpu().tolist()
   token_sequence = TokSequence(ids=token_stream, are_ids_encoded=True)

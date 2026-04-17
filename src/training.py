@@ -134,7 +134,7 @@ if __name__ == "__main__":
     )
 
     trainer = L.Trainer(
-        max_epochs=100,
+        max_epochs=500,
         accelerator="auto",
         devices=1,
         precision="16-mixed",

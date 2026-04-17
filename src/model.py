@@ -168,7 +168,7 @@ class MidiLightningModule(L.LightningModule):
       return 1.0
 
     warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 10000)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 120000)
     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
     return {
       "optimizer": optimizer,
