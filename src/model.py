@@ -161,13 +161,15 @@ class MidiLightningModule(L.LightningModule):
   
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
-    def lr_lambda(step):
-      warmup_steps = 1000
+    warmup_steps = 100
+    def lr_lambda(step: int):
       if step < warmup_steps:
         return step / warmup_steps
       return 1.0
 
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 10000)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
     return {
       "optimizer": optimizer,
       "lr_scheduler": {
@@ -208,16 +210,13 @@ class MidiLightningModule(L.LightningModule):
     )
     return loss
 
-  def training_step(self, batch, batch_idx):
+  def training_step(self, batch):
     loss = self._forward_loss(batch)
 
     self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
     return loss
 
-  def test_step(self, batch_iterator, batch_idx):
-    return
-  
-  def validation_step(self, batch, batch_idx):
+  def validation_step(self, batch):
     loss = self._forward_loss(batch)
 
     self.log("val_loss", loss, prog_bar=True, on_epoch=True)
