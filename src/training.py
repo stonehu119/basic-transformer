@@ -100,6 +100,7 @@ def prepare_dataloaders(
     return train_loader, val_loader, tokenizer
 
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision('medium')
     tokenizer = REMI(params=Path("tokenizer.json"))
     # test_tokenize_process(tokenizer=tokenizer)
     train_loader, test_loader, _ = prepare_dataloaders(
