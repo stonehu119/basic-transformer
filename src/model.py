@@ -81,6 +81,7 @@ class MidiGenerator(nn.Module):
     self.output = nn.Linear(model_dim, vocab_size, bias=False)
     self.output.weight = self.embedding.weight
     self.causal_mask = 0
+    self.__init_weights()
 
   def forward(self, input: torch.Tensor, attention_mask = None) -> torch.Tensor:
     embeddings = self.embedding(input) # (B, T, model_dim)
@@ -130,24 +131,69 @@ class MidiGenerator(nn.Module):
     full_mask = padding_mask & causal_mask # (B, T, T)
 
     return full_mask
+  
+  def __init_weights(self):
+    """Initializes weights in the model to smaller values to stabilize training"""
+    # scale down regular modules first:
+    for module in self.modules():
+
+      if isinstance(module, nn.Linear):
+        nn.init.normal_(module.weight, std=0.02)
+        if module.bias is not None:
+          nn.init.zeros_(module.bias)
+
+      elif isinstance(module, nn.Embedding):
+        nn.init.normal_(module.weight, std=0.02)
+    
+    # residual layers build up variance because of addition. Scale these down:
+    num_layers = len(self.transformers)
+    residual_proj_std = 0.02 / (2 * num_layers) ** 0.5
+    block: TransformerBlock
+    for block in self.transformers:
+      nn.init.normal_(block.mha.out_layer.weight, std=residual_proj_std)
+      nn.init.normal_(block.ffn[3].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
     super().__init__()
     self.vocab_size = vocab_size
     self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
+  
+  def configure_optimizers(self):
+    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
+    warmup_steps = 100
+    def lr_lambda(step: int):
+      if step < warmup_steps:
+        return step / warmup_steps
+      return 1.0
+
+    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 120000)
+    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
+    return {
+      "optimizer": optimizer,
+      "lr_scheduler": {
+        "scheduler": scheduler,
+        "interval": "step",
+      }
+    }
+
+  def _get_param_groups(self):
+    # No weight decay on biases and LayerNorm params
+    decay, no_decay = [], []
+    for name, param in self.named_parameters():
+        if param.ndim <= 1 or name.endswith(".bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    return [
+        {"params": decay, "weight_decay": 0.1},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
 
   def forward(self, input, attention_mask = None):
     return self.model(input, attention_mask)
-
-  def configure_optimizers(self):
-    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=100, eta_min=1e-6)
-    return [optimizer], [scheduler]
-
-  def on_train_start(self):
-    # set some training attribute here for self.model which causes it to apply a causal mask?
-    return
   
   def _forward_loss(self, batch):
     # batch is a mapping from string to longtensor
@@ -164,29 +210,14 @@ class MidiLightningModule(L.LightningModule):
     )
     return loss
 
-  def training_step(self, batch, batch_idx):
+  def training_step(self, batch):
     loss = self._forward_loss(batch)
 
     self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
     return loss
 
-  def test_step(self, batch_iterator, batch_idx):
-    return
-  
-  def validation_step(self, batch, batch_idx):
+  def validation_step(self, batch):
     loss = self._forward_loss(batch)
 
     self.log("val_loss", loss, prog_bar=True, on_epoch=True)
     return loss
-  
-  def on_train_epoch_end(self):
-    return
-  
-  def on_test_epoch_end(self):
-    return
-  
-  def on_validation_epoch_end(self):
-    return
-  
-  def predict_step(self, batch_iterator, batch_idx):
-    return
