@@ -62,7 +62,7 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint("checkpoints/midi-transformer-epoch=93-val_loss=4.79.ckpt")
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/3_lr_with_cosine_anneal.ckpt")
   model = lightning_wrapper.model
 
-  generate_from_midi(model, midi_path = "data/maestro_midi/maestro-v3.0.0/2009/MIDI-Unprocessed_02_R1_2009_03-06_ORIG_MID--AUDIO_02_R1_2009_02_R1_2009_05_WAV.midi")
+  generate_from_midi(model, midi_path = "test/Arabesque-in-E-Nr-1.midi")
