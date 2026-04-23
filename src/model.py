@@ -103,10 +103,11 @@ class MidiGenerator(nn.Module):
 
   def forward(self, input: torch.Tensor, attention_mask = None) -> torch.Tensor:
     embeddings = self.embedding(input) # (B, T, model_dim)
-    position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
+    T = input.size(1)
+    position_offsets = torch.arange(T, device=device).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
-    mask = self.apply_mask(self.context_size, attention_mask, input.device)
+    mask = self.apply_mask(T, attention_mask, input.device)
 
     for block in self.transformers:
       embeddings = block(embeddings, mask)
@@ -115,13 +116,14 @@ class MidiGenerator(nn.Module):
     return logits
   
   @torch.no_grad()
-  def generate(self, input, max_len, eos_token_id=None):
-    B = input.size(0) # batch_size
+  def generate(self, input: torch.Tensor, max_len, eos_token_id=None):
+    B = input.size(0)
     assert B == 1
     for _ in range(max_len):
-      cropped = input[0, -self.context_size:]
+      cropped = input[:, -self.context_size:] # (1, T, model_dim)
+      T = cropped.size(1)
       embeddings = self.embedding(cropped) # (1, T, model_dim)
-      position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
+      position_offsets = torch.arange(T, device=device).unsqueeze(0)
       embeddings = embeddings + self.positional(position_offsets)
       for block in self.transformers:
         embeddings = block(embeddings)
