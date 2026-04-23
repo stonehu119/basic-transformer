@@ -23,9 +23,9 @@ def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
 def prepare_dataloaders(
     midi_paths: list[Path],
     tokenizer: REMI,
-    max_seq_len: int = 512,
+    max_seq_len: int = 5,
     chunks_dir: Path | None = None,
-    batch_size: int = 32,
+    batch_size: int = 1,
     num_workers: int = 0,
     train_ratio: float = 0.9,
     seed: int = 42,
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule()
+    model = MidiLightningModule(context_size=5, model_dim=8)
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
@@ -140,7 +140,7 @@ if __name__ == "__main__":
         precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
         callbacks=[checkpoint_callback, early_stop_callback],
-        # fast_dev_run=True
+        fast_dev_run=True
     )
 
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader)

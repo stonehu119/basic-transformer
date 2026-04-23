@@ -47,16 +47,22 @@ class MultiHeadAttn(nn.Module):
 
   def forward(self, input: torch.Tensor, mask: torch.Tensor = None):
     # input starts as (B, T, model_dim)
+    print("") # newline for readability
     B, T, model_dim = input.shape
+    assert B == 1
+    print(f"Input with dimensions (T, model_dim):\n{input.reshape(T, model_dim)}")
     projected: torch.Tensor = self.qkv(input) # (B, T, 3*model_dim)
     expanded = projected.reshape(B, T, 3, self.num_heads, self.attn_dim)
     permuted = expanded.permute(2, 0, 3, 1, 4) # (3, B, num_heads, T, attn_dim)
     Q, K, V = permuted.unbind(0) # 3 tensors of (B, num_heads, T, attn_dim)
+    print(f"\nSingle head of attention, all (T, attn_dim):\nQ:\n{Q[0,0,:,:]}\nK:\n{K[0,0,:,:]}\nV:\n{Q[0,0,:,:]}")
+    print(f"\nMask (T, T):\n{mask[0, :, :]}")
 
     # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
     mask = None if mask is None else mask.unsqueeze(1)
 
     attn_out = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
+    print(f"\nAttention output of 1 head (T, attn_dim):\n{attn_out}")
     de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
     out = de_permuted.reshape(B, T, model_dim)
     return self.out_layer(out)
