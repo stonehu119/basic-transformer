@@ -54,7 +54,7 @@ class MultiHeadAttn(nn.Module):
     Q, K, V = permuted.unbind(0) # 3 tensors of (B, num_heads, T, attn_dim)
 
     # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
-    mask = mask.unsqueeze(1)
+    mask = None if mask is None else mask.unsqueeze(1)
 
     attn_out = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
     de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
@@ -138,7 +138,7 @@ class MidiGenerator(nn.Module):
     return input
 
   def apply_mask(self, seq_len, attention_mask: torch.Tensor, device) -> torch.Tensor:
-    causal_mask: torch.Tensor = torch.tril(torch.ones(seq_len, seq_len, device = device))
+    causal_mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
     causal_mask = causal_mask.bool().unsqueeze(0) # (1, T, T)
     if attention_mask is None: return causal_mask
 
