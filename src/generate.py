@@ -13,7 +13,7 @@ def generate_from_midi(
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 1000,
+  max_tokens = 200,
 ):
   torch.set_default_device(device)
   model.eval()
@@ -62,7 +62,7 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/4_vectorized_mha.ckpt")
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/5_colab_trained_3.41.ckpt", model_dim = 512)
   model = lightning_wrapper.model
 
-  generate_from_midi(model, midi_path = "test/Arabesque-in-E-Nr-1.midi")
+  generate_from_midi(model, midi_path = "test/test2.midi")
