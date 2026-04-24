@@ -140,6 +140,7 @@ if __name__ == "__main__":
         precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
         callbacks=[checkpoint_callback, early_stop_callback],
+        enable_progress_bar=False,
         # fast_dev_run=True
     )
 
