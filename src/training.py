@@ -106,7 +106,7 @@ if __name__ == "__main__":
     train_loader, test_loader, _ = prepare_dataloaders(
         midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
         tokenizer = tokenizer,
-        num_workers=3,
+        num_workers=2,
     )
     batch = next(iter(train_loader))
     input_ids = batch["input_ids"]
