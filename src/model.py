@@ -6,13 +6,18 @@ from os import sys
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+# Note: this module is unused now but when starting out I wrote this to
+#       help me understand the attention mechanism better. However,
+#       I've condensed the separate heads into a vectorized operation
+#       inside MultiHeadAttn, which calls F.scaled_dot_product_attention
+#       which from what I understand uses FlashAttention to speed up its
+#       calculation as well as using optimized CUDA kernels.
 class AttnHead(nn.Module):
   def __init__(self, model_dim = 256, attn_dim = 64):
     super().__init__()
     self.Wq = nn.Linear(model_dim, attn_dim, bias=False)
     self.Wk = nn.Linear(model_dim, attn_dim, bias=False)
     self.Wv = nn.Linear(model_dim, attn_dim, bias=False)
-    self.dropout = nn.Dropout(p=0.1)
     self.attn_dim = attn_dim
 
   def forward(self, input: torch.Tensor, mask=None):
@@ -25,34 +30,45 @@ class AttnHead(nn.Module):
       attn_scores = attn_scores.masked_fill(~mask, float('-inf'))
 
     weights = F.softmax(attn_scores, dim=-1)
-    out = self.dropout(weights) @ V
+    out = weights @ V
     return out, weights
 
 class MultiHeadAttn(nn.Module):
   def __init__(self, model_dim = 256, num_heads = 4):
     super().__init__()
     assert model_dim % num_heads == 0
-    self.head_dim = model_dim // num_heads
-    self.attn_heads = nn.ModuleList(
-      [AttnHead(model_dim=model_dim, attn_dim=self.head_dim) for _ in range(num_heads)]
-    )
-    self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
-    self.dropout = nn.Dropout(p=0.1)
+    self.num_heads = num_heads
+    self.attn_dim = model_dim // num_heads # also known as head_dim
 
-  def forward(self, input, mask = None):
-    head_outputs, head_weights = zip(*[attn_head(input, mask) for attn_head in self.attn_heads])
-    out = self.out_layer(torch.cat(head_outputs, dim=-1))
-    weights = torch.stack(head_weights, dim=-1)
-    return self.dropout(out), weights
+    # need to project input (B, T, model_dim) into (B, T, 3*model_dim), 3x because one for q, k, v
+    self.qkv = nn.Linear(in_features=model_dim, out_features=3*model_dim)
+
+    self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
+
+  def forward(self, input: torch.Tensor, mask: torch.Tensor = None):
+    # input starts as (B, T, model_dim)
+    B, T, model_dim = input.shape
+    projected: torch.Tensor = self.qkv(input) # (B, T, 3*model_dim)
+    expanded = projected.reshape(B, T, 3, self.num_heads, self.attn_dim)
+    permuted = expanded.permute(2, 0, 3, 1, 4) # (3, B, num_heads, T, attn_dim)
+    Q, K, V = permuted.unbind(0) # 3 tensors of (B, num_heads, T, attn_dim)
+
+    # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
+    mask = None if mask is None else mask.unsqueeze(1)
+
+    attn_out = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
+    de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
+    out = de_permuted.reshape(B, T, model_dim)
+    return self.out_layer(out)
 
 class TransformerBlock(nn.Module):
   def __init__(self, model_dim = 256):
     super().__init__()
     self.mha = MultiHeadAttn(model_dim, num_heads=4)
+    self.dropout = nn.Dropout(p=0.1)
     self.ffn = nn.Sequential(
       nn.Linear(in_features=model_dim, out_features=model_dim * 4),
       nn.GELU(),
-      nn.Dropout(p=0.1),
       nn.Linear(in_features=model_dim * 4, out_features=model_dim),
       nn.Dropout(p=0.1),
     )
@@ -62,12 +78,14 @@ class TransformerBlock(nn.Module):
   def forward(self, input, mask=None) -> torch.Tensor:
     # Pre LN block 1
     norm_input = self.norm1(input)
-    attention, weights = self.mha(norm_input, mask)
-    input = attention + input
+    attention = self.mha(norm_input, mask)
+    dropped = self.dropout(attention)
+
+    input = dropped + input
 
     # Pre LN block 2
-    norm_input = self.norm2(input)
-    ffn = self.ffn(norm_input)
+    norm_input2 = self.norm2(input)
+    ffn = self.ffn(norm_input2)
     input = ffn + input
     return input
 
@@ -85,10 +103,11 @@ class MidiGenerator(nn.Module):
 
   def forward(self, input: torch.Tensor, attention_mask = None) -> torch.Tensor:
     embeddings = self.embedding(input) # (B, T, model_dim)
-    position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
+    T = input.size(1)
+    position_offsets = torch.arange(T, device=device).unsqueeze(0)
     embeddings = embeddings + self.positional(position_offsets)
 
-    mask = self.apply_mask(self.context_size, attention_mask, input.device)
+    mask = self.apply_mask(T, attention_mask, input.device)
 
     for block in self.transformers:
       embeddings = block(embeddings, mask)
@@ -97,13 +116,14 @@ class MidiGenerator(nn.Module):
     return logits
   
   @torch.no_grad()
-  def generate(self, input, max_len, eos_token_id=None):
-    B = input.size(0) # batch_size
+  def generate(self, input: torch.Tensor, max_len, eos_token_id=None):
+    B = input.size(0)
     assert B == 1
     for _ in range(max_len):
-      cropped = input[0, -self.context_size:]
+      cropped = input[:, -self.context_size:] # (1, T, model_dim)
+      T = cropped.size(1)
       embeddings = self.embedding(cropped) # (1, T, model_dim)
-      position_offsets = torch.arange(self.context_size, device=device).unsqueeze(0)
+      position_offsets = torch.arange(T, device=device).unsqueeze(0)
       embeddings = embeddings + self.positional(position_offsets)
       for block in self.transformers:
         embeddings = block(embeddings)
@@ -120,9 +140,9 @@ class MidiGenerator(nn.Module):
     return input
 
   def apply_mask(self, seq_len, attention_mask: torch.Tensor, device) -> torch.Tensor:
-    causal_mask: torch.Tensor = torch.tril(torch.ones(seq_len, seq_len, device = device))
+    causal_mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
     causal_mask = causal_mask.bool().unsqueeze(0) # (1, T, T)
-    if attention_mask == None: return causal_mask
+    if attention_mask is None: return causal_mask
 
     B, T = attention_mask.shape
     padding_mask = attention_mask.unsqueeze(1).to(torch.bool)  # (B, 1, T)
@@ -151,7 +171,7 @@ class MidiGenerator(nn.Module):
     block: TransformerBlock
     for block in self.transformers:
       nn.init.normal_(block.mha.out_layer.weight, std=residual_proj_std)
-      nn.init.normal_(block.ffn[3].weight, std=residual_proj_std)
+      nn.init.normal_(block.ffn[2].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
@@ -168,7 +188,7 @@ class MidiLightningModule(L.LightningModule):
       return 1.0
 
     warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 120000)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 30000)
     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
     return {
       "optimizer": optimizer,

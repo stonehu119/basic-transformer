@@ -13,7 +13,7 @@ def generate_from_midi(
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 10000,
+  max_tokens = 1000,
 ):
   torch.set_default_device(device)
   model.eval()
@@ -34,7 +34,7 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   bos_token = tokenizer["BOS_None"]
   prepend = torch.full((1, 1), bos_token)
   out = torch.cat([prepend, out], dim=1)
-  out = out[:, :4000]
+  out = out[:, :480]
 
   print(out.shape)
   return out
@@ -62,7 +62,7 @@ if __name__ == "__main__":
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/3_lr_with_cosine_anneal.ckpt")
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/4_vectorized_mha.ckpt")
   model = lightning_wrapper.model
 
   generate_from_midi(model, midi_path = "test/Arabesque-in-E-Nr-1.midi")
