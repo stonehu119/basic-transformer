@@ -8,7 +8,7 @@ from miditok.utils import split_files_for_training
 import torch
 from torch.utils.data import random_split, DataLoader
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, TQDMProgressBar
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import TensorBoardLogger
 
 from model import MidiLightningModule
@@ -105,7 +105,8 @@ if __name__ == "__main__":
     # test_tokenize_process(tokenizer=tokenizer)
     train_loader, test_loader, _ = prepare_dataloaders(
         midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
-        tokenizer = tokenizer
+        tokenizer = tokenizer,
+        num_workers=3,
     )
     batch = next(iter(train_loader))
     input_ids = batch["input_ids"]
@@ -139,7 +140,7 @@ if __name__ == "__main__":
         devices=1,
         precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
-        callbacks=[checkpoint_callback, early_stop_callback, TQDMProgressBar(refresh_rate=50)],
+        callbacks=[checkpoint_callback, early_stop_callback],
         # fast_dev_run=True
     )
 
