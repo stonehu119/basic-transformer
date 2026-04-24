@@ -129,7 +129,7 @@ if __name__ == "__main__":
     )
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=5,
+        patience=20,
         verbose=True,
         mode="min"
     )
@@ -140,7 +140,8 @@ if __name__ == "__main__":
         devices=1,
         precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
-        callbacks=[checkpoint_callback, early_stop_callback, TQDMProgressBar(refresh_rate=5)],
+        callbacks=[checkpoint_callback, early_stop_callback, TQDMProgressBar(refresh_rate=100)],
+        gradient_clip_val=1.0
         # fast_dev_run=True
     )
 
