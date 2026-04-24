@@ -8,7 +8,7 @@ from miditok.utils import split_files_for_training
 import torch
 from torch.utils.data import random_split, DataLoader
 import lightning as L
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, TQDMProgressBar
 from lightning.pytorch.loggers import TensorBoardLogger
 
 from model import MidiLightningModule
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule()
+    model = MidiLightningModule(model_dim=512)
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         devices=1,
         precision="16-mixed",
         logger=TensorBoardLogger("lightning_logs/"),
-        callbacks=[checkpoint_callback, early_stop_callback],
+        callbacks=[checkpoint_callback, early_stop_callback, TQDMProgressBar(refresh_rate=50)],
         enable_progress_bar=False,
         # fast_dev_run=True
     )
