@@ -107,7 +107,7 @@ if __name__ == "__main__":
         midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
         tokenizer = tokenizer,
         num_workers=3,
-        max_seq_len=2048,
+        max_seq_len=1024,
     )
     batch = next(iter(train_loader))
     input_ids = batch["input_ids"]
@@ -120,7 +120,7 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule(model_dim=512, context_size=2048, num_layers=8)
+    model = MidiLightningModule(model_dim=512, context_size=1024, num_layers=8)
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
