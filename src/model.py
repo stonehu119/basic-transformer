@@ -174,10 +174,10 @@ class MidiGenerator(nn.Module):
       nn.init.normal_(block.ffn[2].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
     super().__init__()
     self.vocab_size = vocab_size
-    self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
+    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers)
   
   def configure_optimizers(self):
     optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4, weight_decay=0.1)
