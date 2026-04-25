@@ -2,3 +2,4 @@ data
 .cursor
 lightning_logs
 checkpoints
+out
