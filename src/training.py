@@ -24,7 +24,6 @@ def prepare_dataloaders(
     midi_paths: list[Path],
     tokenizer: REMI,
     max_seq_len: int = 512,
-    chunks_dir: Path | None = None,
     batch_size: int = 32,
     num_workers: int = 0,
     train_ratio: float = 0.9,
@@ -32,17 +31,29 @@ def prepare_dataloaders(
 ) -> tuple[DataLoader, DataLoader, REMI]:
 
     chunks_dir = Path("data/chunks")
+    train_dir = Path("data/chunks/train")
+    val_dir = Path("data/chunks/val")
     max_seq_len += 1
 
     shuffle(midi_paths)
+    n = len(midi_paths)
+    n_train = int(n * train_ratio)
+    train_midi_paths = midi_paths[:n_train]
+    val_midi_paths = midi_paths[n_train:]
 
     chunk_paths = list(chunks_dir.glob("**/*.midi"))
     if not chunk_paths:
         print(f"Splitting {len(midi_paths)} MIDIs into chunks (max_seq_len={max_seq_len})...")
         split_files_for_training(
-            files_paths=midi_paths,
+            files_paths=train_midi_paths,
             tokenizer=tokenizer,
-            save_dir=chunks_dir,
+            save_dir=train_dir,
+            max_seq_len=max_seq_len,
+        )
+        split_files_for_training(
+            files_paths=val_midi_paths,
+            tokenizer=tokenizer,
+            save_dir=val_dir,
             max_seq_len=max_seq_len,
         )
         chunk_paths = sorted(chunks_dir.rglob("*.midi"))
@@ -51,6 +62,9 @@ def prepare_dataloaders(
 
     if not chunk_paths:
         raise RuntimeError("No chunk files produced. Check MIDI paths and tokenizer.")
+    
+    train_paths = sorted(train_dir.rglob("*.midi"))
+    val_paths = sorted(val_dir.rglob("*.midi"))
 
     bos_id = _get_special_token_id(tokenizer, "BOS_None", "BOS")
     eos_id = _get_special_token_id(tokenizer, "EOS_None", "EOS")
@@ -60,19 +74,20 @@ def prepare_dataloaders(
     if pad_id is None:
         raise ValueError("Tokenizer has no PAD token id")
 
-    dataset = DatasetMIDI(
-        files_paths=chunk_paths,
+    train_ds = DatasetMIDI(
+        files_paths=train_paths,
         tokenizer=tokenizer,
         max_seq_len=max_seq_len,
         bos_token_id=bos_id,
         eos_token_id=eos_id,
     )
-
-    gen = torch.Generator().manual_seed(seed)
-    n = len(dataset)
-    n_train = int(n * train_ratio)
-    n_val = n - n_train
-    train_ds, val_ds = random_split(dataset, [n_train, n_val], generator=gen)
+    val_ds = DatasetMIDI(
+        files_paths=val_paths,
+        tokenizer=tokenizer,
+        max_seq_len=max_seq_len,
+        bos_token_id=bos_id,
+        eos_token_id=eos_id,
+    )
 
     collator = DataCollator(
         pad_token_id=pad_id,
@@ -120,7 +135,7 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule(model_dim=512, context_size=1024, num_layers=8)
+    model = MidiLightningModule(context_size=1024)
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
