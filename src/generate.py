@@ -55,14 +55,20 @@ if __name__ == "__main__":
     description="Read from a MIDI file, generate, and output to a new MIDI file"
   )
   parser.add_argument(
-    "--filepath",
+    "--checkpoint-path",
     type=Path,
-    default="midi-transformer-epoch=12-val_loss=5.77.ckpt",
+    default="saved_checkpoints/5_doubled_model_dim.ckpt",
+    help="Path to .ckpt file",
+  )
+  parser.add_argument(
+    "--midi-path",
+    type=Path,
+    default="test/arabesque.midi",
     help="Path to .midi file",
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/5_colab_trained_3.41.ckpt", model_dim = 512)
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint(args.checkpoint_path, model_dim = 512, context_size=2048)
   model = lightning_wrapper.model
 
-  generate_from_midi(model, midi_path = "test/test2.midi")
+  generate_from_midi(model, midi_path = args.midi_path)
