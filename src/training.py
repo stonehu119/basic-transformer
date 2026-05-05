@@ -135,7 +135,7 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule(context_size=1024)
+    model = MidiLightningModule(model_dim = 512, context_size=1024, num_layers = 8)
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
@@ -145,13 +145,13 @@ if __name__ == "__main__":
     )
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=20,
+        patience=145,
         verbose=True,
         mode="min"
     )
 
     trainer = L.Trainer(
-        max_epochs=300,
+        max_epochs=145,
         accelerator="auto",
         devices=1,
         precision="16-mixed",
