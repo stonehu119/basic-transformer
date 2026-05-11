@@ -13,7 +13,7 @@ def generate_from_midi(
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 1000,
+  max_tokens = 200,
 ):
   torch.set_default_device(device)
   model.eval()
@@ -55,14 +55,20 @@ if __name__ == "__main__":
     description="Read from a MIDI file, generate, and output to a new MIDI file"
   )
   parser.add_argument(
-    "--filepath",
+    "--checkpoint-path",
     type=Path,
-    default="midi-transformer-epoch=12-val_loss=5.77.ckpt",
+    default="saved_checkpoints/5_doubled_model_dim.ckpt",
+    help="Path to .ckpt file",
+  )
+  parser.add_argument(
+    "--midi-path",
+    type=Path,
+    default="test/arabesque.midi",
     help="Path to .midi file",
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint("saved_checkpoints/4_vectorized_mha.ckpt")
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint(args.checkpoint_path, model_dim = 512, context_size=2048)
   model = lightning_wrapper.model
 
-  generate_from_midi(model, midi_path = "test/Arabesque-in-E-Nr-1.midi")
+  generate_from_midi(model, midi_path = args.midi_path)

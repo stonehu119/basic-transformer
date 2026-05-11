@@ -439,7 +439,7 @@
     },
     "tokenization": "REMI",
     "miditok_version": "3.0.6.post1",
-    "symusic_version": "0.5.9",
+    "symusic_version": "0.6.0",
     "hf_tokenizers_version": "0.22.2",
     "_vocab_base": {
         "PAD_None": 0,

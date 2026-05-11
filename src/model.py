@@ -130,7 +130,7 @@ class MidiGenerator(nn.Module):
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
-      probs = F.softmax(logits, dim=-1)
+      probs = F.softmax(logits / 0.7, dim=-1)
       next_token = torch.multinomial(probs, num_samples=1).reshape((1, 1))
       input = torch.cat([input, next_token], dim=1)
 
@@ -174,13 +174,13 @@ class MidiGenerator(nn.Module):
       nn.init.normal_(block.ffn[2].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
     super().__init__()
     self.vocab_size = vocab_size
-    self.model = MidiGenerator(vocab_size=vocab_size, context_size=context_size, model_dim=model_dim)
+    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers)
   
   def configure_optimizers(self):
-    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4)
+    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4, weight_decay=0.1)
     warmup_steps = 100
     def lr_lambda(step: int):
       if step < warmup_steps:
@@ -188,7 +188,7 @@ class MidiLightningModule(L.LightningModule):
       return 1.0
 
     warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 30000)
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 50000)
     scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
     return {
       "optimizer": optimizer,
