@@ -123,7 +123,7 @@ def main() -> None:
     parser.add_argument(
         "--save-tokenizer",
         type=Path,
-        default=None,
+        default="tokenizer.json",
         help="Path to save tokenizer params (e.g. tokenizer.json).",
     )
     args = parser.parse_args()
