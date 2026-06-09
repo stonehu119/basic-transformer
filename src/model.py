@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
-from os import sys
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -45,7 +44,7 @@ class MultiHeadAttn(nn.Module):
 
     self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
 
-  def forward(self, input: torch.Tensor, mask: torch.Tensor = None):
+  def forward(self, input: torch.Tensor, mask: torch.Tensor = None, kv_cache: torch.Tensor = None):
     # input starts as (B, T, model_dim)
     B, T, model_dim = input.shape
     projected: torch.Tensor = self.qkv(input) # (B, T, 3*model_dim)
@@ -53,13 +52,20 @@ class MultiHeadAttn(nn.Module):
     permuted = expanded.permute(2, 0, 3, 1, 4) # (3, B, num_heads, T, attn_dim)
     Q, K, V = permuted.unbind(0) # 3 tensors of (B, num_heads, T, attn_dim)
 
+    if kv_cache is not None:
+      cached_K, cached_V = kv_cache
+      K = torch.cat([cached_K, K], dim=2)
+      V = torch.cat([cached_V, V], dim=2)
+    
+    new_cache = (K, V)
+
     # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
     mask = None if mask is None else mask.unsqueeze(1)
 
     attn_out = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
     de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
     out = de_permuted.reshape(B, T, model_dim)
-    return self.out_layer(out)
+    return self.out_layer(out), new_cache
 
 class TransformerBlock(nn.Module):
   def __init__(self, model_dim = 256):
@@ -75,10 +81,10 @@ class TransformerBlock(nn.Module):
     self.norm1 = nn.LayerNorm(normalized_shape=model_dim)
     self.norm2 = nn.LayerNorm(normalized_shape=model_dim)
 
-  def forward(self, input, mask=None) -> torch.Tensor:
+  def forward(self, input, mask=None, kv_cache = None) -> torch.Tensor:
     # Pre LN block 1
     norm_input = self.norm1(input)
-    attention = self.mha(norm_input, mask)
+    attention, new_cache = self.mha(norm_input, mask, kv_cache)
     dropped = self.dropout(attention)
 
     input = dropped + input
@@ -87,7 +93,7 @@ class TransformerBlock(nn.Module):
     norm_input2 = self.norm2(input)
     ffn = self.ffn(norm_input2)
     input = ffn + input
-    return input
+    return input, new_cache
 
 class MidiGenerator(nn.Module):
   def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
@@ -110,7 +116,7 @@ class MidiGenerator(nn.Module):
     mask = self.apply_mask(T, attention_mask, input.device)
 
     for block in self.transformers:
-      embeddings = block(embeddings, mask)
+      embeddings, _ = block(embeddings, mask)
 
     logits = self.output(embeddings) # (B, T, vocab_size)
     return logits
@@ -119,14 +125,17 @@ class MidiGenerator(nn.Module):
   def generate(self, input: torch.Tensor, max_len, eos_token_id=None):
     B = input.size(0)
     assert B == 1
-    for _ in range(max_len):
-      cropped = input[:, -self.context_size:] # (1, T, model_dim)
+    caches = [None] * len(self.transformers) # (num_layers, 2, up to context_size)
+    pos = 0
+    for i in range(max_len):
+      cropped = input[:, -self.context_size:] if i == 0 else input[:, -1:] # (1, T, model_dim)
       T = cropped.size(1)
       embeddings = self.embedding(cropped) # (1, T, model_dim)
-      position_offsets = torch.arange(T, device=device).unsqueeze(0)
+      position_offsets = torch.arange(pos, pos + T, device=device).unsqueeze(0)
+      pos += T
       embeddings = embeddings + self.positional(position_offsets)
-      for block in self.transformers:
-        embeddings = block(embeddings)
+      for layer, block in enumerate(self.transformers):
+        embeddings, caches[layer] = block(embeddings, mask = None, kv_cache = caches[layer])
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
