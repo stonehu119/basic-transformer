@@ -125,7 +125,7 @@ class MidiGenerator(nn.Module):
   def generate(self, input: torch.Tensor, max_len, eos_token_id=None):
     B = input.size(0)
     assert B == 1
-    caches = [None] * len(self.transformers) # (num_layers, 2, up to context_size)
+    caches = [None] * len(self.transformers)
     pos = 0
     for i in range(max_len):
       cropped = input[:, -self.context_size:] if i == 0 else input[:, -1:] # (1, T, model_dim)
@@ -134,12 +134,15 @@ class MidiGenerator(nn.Module):
       position_offsets = torch.arange(pos, pos + T, device=device).unsqueeze(0)
       pos += T
       embeddings = embeddings + self.positional(position_offsets)
+      mask = self.apply_mask(T, None, cropped.device) if i == 0 else None
       for layer, block in enumerate(self.transformers):
-        embeddings, caches[layer] = block(embeddings, mask = None, kv_cache = caches[layer])
+        embeddings, new_cache = block(embeddings, mask, kv_cache = caches[layer])
+        K, V = new_cache
+        caches[layer] = (K[:, :, -self.context_size:], V[:, :, -self.context_size:])
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
-      probs = F.softmax(logits / 0.7, dim=-1)
+      probs = F.softmax(logits / 0.9, dim=-1)
       next_token = torch.multinomial(probs, num_samples=1).reshape((1, 1))
       input = torch.cat([input, next_token], dim=1)
 
