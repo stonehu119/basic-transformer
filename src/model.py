@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,9 +70,9 @@ class MultiHeadAttn(nn.Module):
     return self.out_layer(out), new_cache
 
 class TransformerBlock(nn.Module):
-  def __init__(self, model_dim = 256):
+  def __init__(self, model_dim = 256, num_heads = 4):
     super().__init__()
-    self.mha = MultiHeadAttn(model_dim, num_heads=4)
+    self.mha = MultiHeadAttn(model_dim, num_heads=num_heads)
     self.dropout = nn.Dropout(p=0.1)
     self.ffn = nn.Sequential(
       nn.Linear(in_features=model_dim, out_features=model_dim * 4),
@@ -96,12 +98,12 @@ class TransformerBlock(nn.Module):
     return input, new_cache
 
 class MidiGenerator(nn.Module):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4, num_heads = 4):
     super().__init__()
     self.context_size = context_size
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
-    self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim) for _ in range(num_layers)])
+    self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim, num_heads=num_heads) for _ in range(num_layers)])
     self.output = nn.Linear(model_dim, vocab_size, bias=False)
     self.output.weight = self.embedding.weight
     self.causal_mask = 0
@@ -142,7 +144,7 @@ class MidiGenerator(nn.Module):
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
-      probs = F.softmax(logits / 0.9, dim=-1)
+      probs = F.softmax(logits / 0.85, dim=-1)
       next_token = torch.multinomial(probs, num_samples=1).reshape((1, 1))
       input = torch.cat([input, next_token], dim=1)
 
@@ -186,22 +188,31 @@ class MidiGenerator(nn.Module):
       nn.init.normal_(block.ffn[2].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4, num_heads = 4):
     super().__init__()
     self.vocab_size = vocab_size
-    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers)
+    self.save_hyperparameters()
+    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers, num_heads)
   
   def configure_optimizers(self):
-    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4, weight_decay=0.1)
-    warmup_steps = 100
+    peak_lr = 3e-4
+    optimizer = torch.optim.AdamW(self._get_param_groups(), lr=peak_lr, betas=(0.9, 0.95))
+
+    # Decay the LR over the *actual* length of this run instead of a hardcoded
+    # step count. Lightning derives total optimizer steps from the dataloader
+    total_steps = int(self.trainer.estimated_stepping_batches)
+    warmup_steps = min(2000, max(1, total_steps // 20))  # ~5% warmup, capped at 2000
+    decay_steps = max(1, total_steps - warmup_steps)
+    min_lr_ratio = 0.1  # floor the LR at 10% of peak rather than annealing to 0
+
     def lr_lambda(step: int):
       if step < warmup_steps:
-        return step / warmup_steps
-      return 1.0
+        return (step + 1) / warmup_steps
+      progress = min(1.0, (step - warmup_steps) / decay_steps)
+      cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+      return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
 
-    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 50000)
-    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     return {
       "optimizer": optimizer,
       "lr_scheduler": {
