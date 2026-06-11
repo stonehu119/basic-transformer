@@ -14,7 +14,6 @@ from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, TQDMProg
 from lightning.pytorch.loggers import TensorBoardLogger
 
 from model import MidiLightningModule
-from cloud_checkpoint import UploadCheckpointCallback, maybe_download_resume
 
 
 def _env_int(name: str, default: int) -> int:
@@ -142,7 +141,7 @@ if __name__ == "__main__":
 
     # Persist to the RunPod Network Volume (/workspace) when present so
     # checkpoints survive pod restarts; fall back to a local dir otherwise.
-    default_ckpt_dir = "/workspace/checkpoints" if os.path.isdir("/workspace") else "checkpoints"
+    default_ckpt_dir = "checkpoints"
     CKPT_DIR = os.environ.get("CKPT_DIR", default_ckpt_dir)
 
     tokenizer = REMI(params=Path("tokenizer.json"))
@@ -199,7 +198,6 @@ if __name__ == "__main__":
         verbose=True,
         mode="min"
     )
-    upload_callback = UploadCheckpointCallback(dirpath=CKPT_DIR)
 
     trainer = L.Trainer(
         max_epochs=MAX_EPOCHS,
@@ -212,14 +210,14 @@ if __name__ == "__main__":
             best_checkpoint,
             periodic_checkpoint,
             early_stop_callback,
-            upload_callback,
             TQDMProgressBar(refresh_rate=100),
         ],
         gradient_clip_val=1.0
         # fast_dev_run=True
     )
 
-    # Resume automatically: prefer a local last.ckpt, otherwise try to pull one
-    # back from remote storage (fresh pod after a restart).
-    resume_path = maybe_download_resume(CKPT_DIR, "last.ckpt")
+    # Resume automatically: try to load a local ckpt file
+    resume_path = Path(CKPT_DIR) / "last.ckpt"
+    if not resume_path.exists():
+        resume_path = None
     trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader, ckpt_path=resume_path)
