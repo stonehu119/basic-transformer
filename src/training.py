@@ -1,4 +1,6 @@
 
+import os
+from datetime import timedelta
 from miditok import REMI
 from pathlib import Path
 from random import shuffle
@@ -12,6 +14,11 @@ from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, TQDMProg
 from lightning.pytorch.loggers import TensorBoardLogger
 
 from model import MidiLightningModule
+from cloud_checkpoint import UploadCheckpointCallback, maybe_download_resume
+
+
+def _env_int(name: str, default: int) -> int:
+    return int(os.environ.get(name, default))
 
 def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
     """Return token id for the first candidate that exists in the tokenizer vocab."""
@@ -30,10 +37,12 @@ def prepare_dataloaders(
     seed: int = 42,
 ) -> tuple[DataLoader, DataLoader, REMI]:
 
-    chunks_dir = Path("data/chunks")
-    train_dir = Path("data/chunks/train")
-    val_dir = Path("data/chunks/val")
     max_seq_len += 1
+    # Namespace the chunk cache by length: chunks split for a 1024 context must
+    # not be silently reused when you ask for a 2048 context (and vice versa).
+    chunks_dir = Path(f"data/chunks_{max_seq_len}")
+    train_dir = chunks_dir / "train"
+    val_dir = chunks_dir / "val"
 
     shuffle(midi_paths)
     n = len(midi_paths)
@@ -116,13 +125,34 @@ def prepare_dataloaders(
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
+
+    # ----- scaled-up model / run configuration (override any of these via env) -----
+    CONTEXT_SIZE = _env_int("CONTEXT_SIZE", 2048)
+    MODEL_DIM    = _env_int("MODEL_DIM", 1024)
+    NUM_LAYERS   = _env_int("NUM_LAYERS", 8)
+    NUM_HEADS    = _env_int("NUM_HEADS", 16)        # head_dim = 1024 / 16 = 64
+    # Tuned for a 48GB card (A40 / A6000 / L40S) at 2048 context. If you see an
+    # OOM, drop BATCH_SIZE to 8 and raise ACCUM_STEPS to 4; on an 80GB H100/A100
+    # raise BATCH_SIZE (32-64) and set ACCUM_STEPS=1 to keep the card busy.
+    BATCH_SIZE   = _env_int("BATCH_SIZE", 16)
+    ACCUM_STEPS  = _env_int("ACCUM_STEPS", 2)       # effective batch = 16 * 2 = 32
+    MAX_EPOCHS   = _env_int("MAX_EPOCHS", 100)
+    ES_PATIENCE  = _env_int("ES_PATIENCE", 40)      # very tolerant of plateaus
+    PRECISION    = os.environ.get("PRECISION", "bf16-mixed")  # use "16-mixed" on V100/T4
+
+    # Persist to the RunPod Network Volume (/workspace) when present so
+    # checkpoints survive pod restarts; fall back to a local dir otherwise.
+    default_ckpt_dir = "/workspace/checkpoints" if os.path.isdir("/workspace") else "checkpoints"
+    CKPT_DIR = os.environ.get("CKPT_DIR", default_ckpt_dir)
+
     tokenizer = REMI(params=Path("tokenizer.json"))
     # test_tokenize_process(tokenizer=tokenizer)
     train_loader, test_loader, _ = prepare_dataloaders(
         midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
         tokenizer = tokenizer,
         num_workers=3,
-        max_seq_len=1024,
+        batch_size=BATCH_SIZE,
+        max_seq_len=CONTEXT_SIZE,  # match the model's context window
     )
     batch = next(iter(train_loader))
     input_ids = batch["input_ids"]
@@ -135,30 +165,61 @@ if __name__ == "__main__":
     print("Labels are shifted input_ids (autoregressive). OK.")
     print(f"Vocab size for model: {len(tokenizer)}")
 
-    model = MidiLightningModule(model_dim = 512, context_size=1024, num_layers = 8)
-    checkpoint_callback = ModelCheckpoint(
+    model = MidiLightningModule(
+        model_dim=MODEL_DIM,
+        context_size=CONTEXT_SIZE,
+        num_layers=NUM_LAYERS,
+        num_heads=NUM_HEADS,
+    )
+
+    # Top-5 by val_loss, and always keep a rolling last.ckpt for crash resume.
+    best_checkpoint = ModelCheckpoint(
         monitor="val_loss",
-        dirpath="checkpoints/",
-        filename="midi-transformer-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=3,
-        mode="min"
+        dirpath=CKPT_DIR,
+        filename="midi-{epoch:02d}-{step}-{val_loss:.3f}",
+        save_top_k=5,
+        mode="min",
+        save_last=True,
+        auto_insert_metric_name=False,
+    )
+    # Time-based snapshot every 20 min -- crucial on interruptible/spot GPUs
+    # where the pod can vanish between validations.
+    periodic_checkpoint = ModelCheckpoint(
+        dirpath=CKPT_DIR,
+        filename="periodic-{epoch:02d}-{step}",
+        train_time_interval=timedelta(minutes=20),
+        save_top_k=1,
+        auto_insert_metric_name=False,
     )
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=145,
+        patience=ES_PATIENCE,   # epochs of no >min_delta improvement before stopping
+        min_delta=1e-3,         # ignore tiny noise so plateaus must be real
+        check_finite=True,
         verbose=True,
         mode="min"
     )
+    upload_callback = UploadCheckpointCallback(dirpath=CKPT_DIR)
 
     trainer = L.Trainer(
-        max_epochs=145,
+        max_epochs=MAX_EPOCHS,
         accelerator="auto",
         devices=1,
-        precision="16-mixed",
+        precision=PRECISION,
+        accumulate_grad_batches=ACCUM_STEPS,
         logger=TensorBoardLogger("lightning_logs/"),
-        callbacks=[checkpoint_callback, early_stop_callback, TQDMProgressBar(refresh_rate=100)],
+        callbacks=[
+            best_checkpoint,
+            periodic_checkpoint,
+            early_stop_callback,
+            upload_callback,
+            TQDMProgressBar(refresh_rate=100),
+        ],
         gradient_clip_val=1.0
         # fast_dev_run=True
     )
 
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader)
+    # Resume automatically: prefer a local last.ckpt, otherwise try to pull one
+    # back from remote storage (fresh pod after a restart).
+    resume_path = maybe_download_resume(CKPT_DIR, "last.ckpt")
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=test_loader, ckpt_path=resume_path)

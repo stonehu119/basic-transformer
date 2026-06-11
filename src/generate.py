@@ -13,7 +13,7 @@ def generate_from_midi(
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 200,
+  max_tokens = 540,
 ):
   torch.set_default_device(device)
   model.eval()
@@ -57,18 +57,19 @@ if __name__ == "__main__":
   parser.add_argument(
     "--checkpoint-path",
     type=Path,
-    default="saved_checkpoints/5_doubled_model_dim.ckpt",
+    default="checkpoints/last.ckpt",
     help="Path to .ckpt file",
   )
   parser.add_argument(
     "--midi-path",
     type=Path,
-    default="test/arabesque.midi",
+    default="test/rachmaninoff.midi",
     help="Path to .midi file",
   )
   args = parser.parse_args()
 
-  lightning_wrapper = MidiLightningModule.load_from_checkpoint(args.checkpoint_path, model_dim = 512, context_size=2048)
+  # Architecture is restored from the checkpoint's saved hyperparameters.
+  lightning_wrapper = MidiLightningModule.load_from_checkpoint(args.checkpoint_path)
   model = lightning_wrapper.model
 
   generate_from_midi(model, midi_path = args.midi_path)
