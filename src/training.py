@@ -19,6 +19,10 @@ from model import MidiLightningModule
 def _env_int(name: str, default: int) -> int:
     return int(os.environ.get(name, default))
 
+def _find_midi_files(directory: Path) -> list[Path]:
+    """Return sorted list of .mid/.midi files under directory."""
+    return sorted(directory.rglob("*.mid")) + sorted(directory.rglob("*.midi"))
+
 def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
     """Return token id for the first candidate that exists in the tokenizer vocab."""
     for name in candidates:
@@ -49,7 +53,7 @@ def prepare_dataloaders(
     train_midi_paths = midi_paths[:n_train]
     val_midi_paths = midi_paths[n_train:]
 
-    chunk_paths = list(chunks_dir.glob("**/*.midi"))
+    chunk_paths = _find_midi_files(chunks_dir)
     if not chunk_paths:
         print(f"Splitting {len(midi_paths)} MIDIs into chunks (max_seq_len={max_seq_len})...")
         split_files_for_training(
@@ -64,15 +68,15 @@ def prepare_dataloaders(
             save_dir=val_dir,
             max_seq_len=max_seq_len,
         )
-        chunk_paths = sorted(chunks_dir.rglob("*.midi"))
+        chunk_paths = _find_midi_files(chunks_dir)
     else:
         print(f"Using existing {len(chunk_paths)} chunk files in {chunks_dir}")
 
     if not chunk_paths:
         raise RuntimeError("No chunk files produced. Check MIDI paths and tokenizer.")
-    
-    train_paths = sorted(train_dir.rglob("*.midi"))
-    val_paths = sorted(val_dir.rglob("*.midi"))
+
+    train_paths = _find_midi_files(train_dir)
+    val_paths = _find_midi_files(val_dir)
 
     bos_id = _get_special_token_id(tokenizer, "BOS_None", "BOS")
     eos_id = _get_special_token_id(tokenizer, "EOS_None", "EOS")
@@ -146,8 +150,15 @@ if __name__ == "__main__":
 
     tokenizer = REMI(params=Path("tokenizer.json"))
     # test_tokenize_process(tokenizer=tokenizer)
+    # Train on every MIDI file under data/, except chunks produced by a
+    # previous split_files_for_training run (chunks_<seq_len>/).
+    data_dir = Path("data").resolve()
+    midi_paths = [
+        p for p in _find_midi_files(data_dir)
+        if not p.relative_to(data_dir).parts[0].startswith("chunks_")
+    ]
     train_loader, test_loader, _ = prepare_dataloaders(
-        midi_paths = list(Path("data/maestro_midi").resolve().glob("**/*.midi")),
+        midi_paths = midi_paths,
         tokenizer = tokenizer,
         num_workers=3,
         batch_size=BATCH_SIZE,
