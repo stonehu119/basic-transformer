@@ -139,8 +139,8 @@ if __name__ == "__main__":
     # raise BATCH_SIZE (32-64) and set ACCUM_STEPS=1 to keep the card busy.
     BATCH_SIZE   = _env_int("BATCH_SIZE", 16)
     ACCUM_STEPS  = _env_int("ACCUM_STEPS", 2)       # effective batch = 16 * 2 = 32
-    MAX_EPOCHS   = _env_int("MAX_EPOCHS", 100)
-    ES_PATIENCE  = _env_int("ES_PATIENCE", 40)      # very tolerant of plateaus
+    MAX_EPOCHS   = _env_int("MAX_EPOCHS", 50)
+    ES_PATIENCE  = _env_int("ES_PATIENCE", 20)      # very tolerant of plateaus
     PRECISION    = os.environ.get("PRECISION", "bf16-mixed")  # use "16-mixed" on V100/T4
 
     # Persist to the RunPod Network Volume (/workspace) when present so
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     train_loader, test_loader, _ = prepare_dataloaders(
         midi_paths = midi_paths,
         tokenizer = tokenizer,
-        num_workers=3,
+        num_workers=4,
         batch_size=BATCH_SIZE,
         max_seq_len=CONTEXT_SIZE,  # match the model's context window
     )
@@ -223,7 +223,7 @@ if __name__ == "__main__":
             early_stop_callback,
             TQDMProgressBar(refresh_rate=100),
         ],
-        gradient_clip_val=1.0
+        gradient_clip_val=1.0,
         # fast_dev_run=True
     )
 
