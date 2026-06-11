@@ -145,7 +145,7 @@ if __name__ == "__main__":
 
     # Persist to the RunPod Network Volume (/workspace) when present so
     # checkpoints survive pod restarts; fall back to a local dir otherwise.
-    default_ckpt_dir = "checkpoints"
+    default_ckpt_dir = "/workspace/checkpoints" if os.path.isdir("/workspace") else "checkpoints"
     CKPT_DIR = os.environ.get("CKPT_DIR", default_ckpt_dir)
 
     tokenizer = REMI(params=Path("tokenizer.json"))
