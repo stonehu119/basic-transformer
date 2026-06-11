@@ -13,7 +13,7 @@ def generate_from_midi(
   midi_path,
   output_path = "out/test.midi",
   tokenizer = REMI(params=Path("tokenizer.json")),
-  max_tokens = 540,
+  max_tokens = 1024,
 ):
   torch.set_default_device(device)
   model.eval()
@@ -25,7 +25,7 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   tokenized_midi: list[TokSequence] = tokenizer.encode(midi_path)
 
   # save tokenized sequence to file as a sanity check
-  with open("token_stream.txt", "w") as f:
+  with open("out/token_stream.txt", "w") as f:
     f.write("\n".join(map(str, tokenized_midi[0].ids)))
 
   out = torch.tensor(tokenized_midi)
@@ -34,7 +34,7 @@ def load_and_tokenize(midi_path, tokenizer: MusicTokenizer):
   bos_token = tokenizer["BOS_None"]
   prepend = torch.full((1, 1), bos_token)
   out = torch.cat([prepend, out], dim=1)
-  out = out[:, :480]
+  out = out[:, :1024]
 
   print(out.shape)
   return out
@@ -57,13 +57,13 @@ if __name__ == "__main__":
   parser.add_argument(
     "--checkpoint-path",
     type=Path,
-    default="checkpoints/last.ckpt",
+    default="saved_checkpoints/midi-12-15964-3.125.ckpt",
     help="Path to .ckpt file",
   )
   parser.add_argument(
     "--midi-path",
     type=Path,
-    default="test/rachmaninoff.midi",
+    default="test/arabesque.midi",
     help="Path to .midi file",
   )
   args = parser.parse_args()
