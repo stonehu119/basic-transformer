@@ -1,16 +1,19 @@
 """
-Prepare Maestro MIDI dataset for decoder-only transformer training.
+Prepare MIDI datasets for decoder-only transformer training.
 
-Downloads the Maestro dataset (from Hugging Face), and builds a REMI tokenizer with MidiTok.
+Downloads the Maestro dataset (from Hugging Face) and the GiantMIDI-Piano dataset
+(from Kaggle), and builds a REMI tokenizer with MidiTok.
 Has the option to train the tokenizer using BPE.
 """
 
 # eventually we want to map tokens to what their actual midi data represents
 
 import argparse
+import os
 import zipfile
 from pathlib import Path
 
+import kagglehub
 from huggingface_hub import hf_hub_download
 from miditok import REMI, TokenizerConfig
 
@@ -19,12 +22,15 @@ from miditok import REMI, TokenizerConfig
 MAESTRO_HF_REPO = "projectlosangeles/maestro-v3.0.0"
 MAESTRO_MIDI_ZIP = "maestro-v3.0.0-midi.zip"
 
+# Kaggle dataset providing a processed (MIDI-only) version of GiantMIDI-Piano
+GIANT_MIDI_KAGGLE_HANDLE = "pictureinthenoise/music-generation-with-giantmidi-piano"
 
-def get_maestro_midi_paths(data_dir: Path) -> list[Path]:
-    """Return list of paths to .midi files under data_dir (e.g. after extracting Maestro zip)."""
-    paths = sorted(data_dir.rglob("*.midi"))
+
+def get_midi_paths(data_dir: Path) -> list[Path]:
+    """Return list of paths to .mid/.midi files under data_dir."""
+    paths = sorted(data_dir.rglob("*.mid")) + sorted(data_dir.rglob("*.midi"))
     if not paths:
-        raise FileNotFoundError(f"No .midi files found under {data_dir}")
+        raise FileNotFoundError(f"No .mid/.midi files found under {data_dir}")
     return paths
 
 
@@ -54,6 +60,22 @@ def download_maestro(cache_dir: Path) -> Path:
         zf.extractall(extract_dir)
 
     return extract_dir
+
+
+def download_giant_midi(cache_dir: Path) -> Path:
+    """
+    Download the GiantMIDI-Piano dataset (MIDI files only) from Kaggle via kagglehub.
+    Returns the directory containing the downloaded .mid files.
+
+    Requires Kaggle API credentials (~/.kaggle/kaggle.json or the KAGGLE_USERNAME /
+    KAGGLE_KEY environment variables).
+    """
+    cache_dir = cache_dir.resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("KAGGLEHUB_CACHE", str(cache_dir))
+
+    print(f"Downloading {GIANT_MIDI_KAGGLE_HANDLE} from Kaggle...")
+    return Path(kagglehub.dataset_download(GIANT_MIDI_KAGGLE_HANDLE))
 
 
 def build_tokenizer(
@@ -95,7 +117,12 @@ def main() -> None:
         "--data-dir",
         type=Path,
         default=None,
-        help="Directory containing .mid files (or where to download Maestro). If not set, downloads Maestro to ./data.",
+        help="Directory containing .mid files. If not set, downloads Maestro and GiantMIDI-Piano to ./data.",
+    )
+    parser.add_argument(
+        "--skip-giant-midi",
+        action="store_true",
+        help="Don't download/include the GiantMIDI-Piano dataset.",
     )
     parser.add_argument(
         "--cache-dir",
@@ -131,12 +158,20 @@ def main() -> None:
     cache_dir = args.cache_dir or Path("data")
     if args.data_dir is not None:
         data_dir = Path(args.data_dir)
-        midi_paths = get_maestro_midi_paths(data_dir)
+        midi_paths = get_midi_paths(data_dir)
         print(f"Using {len(midi_paths)} MIDI files from {data_dir}")
     else:
-        data_dir = download_maestro(cache_dir)
-        midi_paths = get_maestro_midi_paths(data_dir)
-        print(f"Using {len(midi_paths)} MIDI files from {data_dir}")
+        maestro_dir = download_maestro(cache_dir)
+        midi_paths = get_midi_paths(maestro_dir)
+        print(f"Found {len(midi_paths)} MIDI files in Maestro ({maestro_dir})")
+
+        if not args.skip_giant_midi:
+            giant_midi_dir = download_giant_midi(cache_dir)
+            giant_midi_paths = get_midi_paths(giant_midi_dir)
+            print(f"Found {len(giant_midi_paths)} MIDI files in GiantMIDI-Piano ({giant_midi_dir})")
+            midi_paths += giant_midi_paths
+
+        print(f"Total: {len(midi_paths)} MIDI files")
 
     tokenizer = build_tokenizer(
         num_velocities=args.num_velocities,
