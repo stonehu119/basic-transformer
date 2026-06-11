@@ -1,8 +1,9 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
-from os import sys
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -45,7 +46,7 @@ class MultiHeadAttn(nn.Module):
 
     self.out_layer = nn.Linear(in_features=model_dim, out_features=model_dim)
 
-  def forward(self, input: torch.Tensor, mask: torch.Tensor = None):
+  def forward(self, input: torch.Tensor, mask: torch.Tensor = None, kv_cache: torch.Tensor = None):
     # input starts as (B, T, model_dim)
     B, T, model_dim = input.shape
     projected: torch.Tensor = self.qkv(input) # (B, T, 3*model_dim)
@@ -53,18 +54,25 @@ class MultiHeadAttn(nn.Module):
     permuted = expanded.permute(2, 0, 3, 1, 4) # (3, B, num_heads, T, attn_dim)
     Q, K, V = permuted.unbind(0) # 3 tensors of (B, num_heads, T, attn_dim)
 
+    if kv_cache is not None:
+      cached_K, cached_V = kv_cache
+      K = torch.cat([cached_K, K], dim=2)
+      V = torch.cat([cached_V, V], dim=2)
+    
+    new_cache = (K, V)
+
     # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
     mask = None if mask is None else mask.unsqueeze(1)
 
     attn_out = F.scaled_dot_product_attention(Q, K, V, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
     de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
     out = de_permuted.reshape(B, T, model_dim)
-    return self.out_layer(out)
+    return self.out_layer(out), new_cache
 
 class TransformerBlock(nn.Module):
-  def __init__(self, model_dim = 256):
+  def __init__(self, model_dim = 256, num_heads = 4):
     super().__init__()
-    self.mha = MultiHeadAttn(model_dim, num_heads=4)
+    self.mha = MultiHeadAttn(model_dim, num_heads=num_heads)
     self.dropout = nn.Dropout(p=0.1)
     self.ffn = nn.Sequential(
       nn.Linear(in_features=model_dim, out_features=model_dim * 4),
@@ -75,10 +83,10 @@ class TransformerBlock(nn.Module):
     self.norm1 = nn.LayerNorm(normalized_shape=model_dim)
     self.norm2 = nn.LayerNorm(normalized_shape=model_dim)
 
-  def forward(self, input, mask=None) -> torch.Tensor:
+  def forward(self, input, mask=None, kv_cache = None) -> torch.Tensor:
     # Pre LN block 1
     norm_input = self.norm1(input)
-    attention = self.mha(norm_input, mask)
+    attention, new_cache = self.mha(norm_input, mask, kv_cache)
     dropped = self.dropout(attention)
 
     input = dropped + input
@@ -87,15 +95,15 @@ class TransformerBlock(nn.Module):
     norm_input2 = self.norm2(input)
     ffn = self.ffn(norm_input2)
     input = ffn + input
-    return input
+    return input, new_cache
 
 class MidiGenerator(nn.Module):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4, num_heads = 4):
     super().__init__()
     self.context_size = context_size
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
-    self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim) for _ in range(num_layers)])
+    self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim, num_heads=num_heads) for _ in range(num_layers)])
     self.output = nn.Linear(model_dim, vocab_size, bias=False)
     self.output.weight = self.embedding.weight
     self.causal_mask = 0
@@ -110,7 +118,7 @@ class MidiGenerator(nn.Module):
     mask = self.apply_mask(T, attention_mask, input.device)
 
     for block in self.transformers:
-      embeddings = block(embeddings, mask)
+      embeddings, _ = block(embeddings, mask)
 
     logits = self.output(embeddings) # (B, T, vocab_size)
     return logits
@@ -119,18 +127,24 @@ class MidiGenerator(nn.Module):
   def generate(self, input: torch.Tensor, max_len, eos_token_id=None):
     B = input.size(0)
     assert B == 1
-    for _ in range(max_len):
-      cropped = input[:, -self.context_size:] # (1, T, model_dim)
+    caches = [None] * len(self.transformers)
+    pos = 0
+    for i in range(max_len):
+      cropped = input[:, -self.context_size:] if i == 0 else input[:, -1:] # (1, T, model_dim)
       T = cropped.size(1)
       embeddings = self.embedding(cropped) # (1, T, model_dim)
-      position_offsets = torch.arange(T, device=device).unsqueeze(0)
+      position_offsets = torch.arange(pos, pos + T, device=device).unsqueeze(0)
+      pos += T
       embeddings = embeddings + self.positional(position_offsets)
-      for block in self.transformers:
-        embeddings = block(embeddings)
+      mask = self.apply_mask(T, None, cropped.device) if i == 0 else None
+      for layer, block in enumerate(self.transformers):
+        embeddings, new_cache = block(embeddings, mask, kv_cache = caches[layer])
+        K, V = new_cache
+        caches[layer] = (K[:, :, -self.context_size:], V[:, :, -self.context_size:])
       
       last_embedding = embeddings[-1, -1, :] # (1, 1, model_dim)
       logits = self.output(last_embedding) # (1, 1, vocab_size)
-      probs = F.softmax(logits / 0.7, dim=-1)
+      probs = F.softmax(logits / 0.85, dim=-1)
       next_token = torch.multinomial(probs, num_samples=1).reshape((1, 1))
       input = torch.cat([input, next_token], dim=1)
 
@@ -174,22 +188,31 @@ class MidiGenerator(nn.Module):
       nn.init.normal_(block.ffn[2].weight, std=residual_proj_std)
 
 class MidiLightningModule(L.LightningModule):
-  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4):
+  def __init__(self, vocab_size = 5000, context_size = 512, model_dim = 256, num_layers = 4, num_heads = 4):
     super().__init__()
     self.vocab_size = vocab_size
-    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers)
+    self.save_hyperparameters()
+    self.model = MidiGenerator(vocab_size, context_size, model_dim, num_layers, num_heads)
   
   def configure_optimizers(self):
-    optimizer = torch.optim.AdamW(self.parameters(), lr=3e-4, weight_decay=0.1)
-    warmup_steps = 100
+    peak_lr = 3e-4
+    optimizer = torch.optim.AdamW(self._get_param_groups(), lr=peak_lr, betas=(0.9, 0.95))
+
+    # Decay the LR over the *actual* length of this run instead of a hardcoded
+    # step count. Lightning derives total optimizer steps from the dataloader
+    total_steps = int(self.trainer.estimated_stepping_batches)
+    warmup_steps = min(2000, max(1, total_steps // 20))  # ~5% warmup, capped at 2000
+    decay_steps = max(1, total_steps - warmup_steps)
+    min_lr_ratio = 0.1  # floor the LR at 10% of peak rather than annealing to 0
+
     def lr_lambda(step: int):
       if step < warmup_steps:
-        return step / warmup_steps
-      return 1.0
+        return (step + 1) / warmup_steps
+      progress = min(1.0, (step - warmup_steps) / decay_steps)
+      cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+      return min_lr_ratio + (1.0 - min_lr_ratio) * cosine
 
-    warmup_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 50000)
-    scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup_scheduler, cosine_scheduler], milestones=[warmup_steps])
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     return {
       "optimizer": optimizer,
       "lr_scheduler": {
