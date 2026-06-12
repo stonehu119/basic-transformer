@@ -1,0 +1,8 @@
+{
+  "python.analysis.typeCheckingMode": "strict",
+  "python.analysis.autoFormatStrings": true,
+  "python.analysis.generateWithTypeAnnotation": true,
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportUnnecessaryComparison": "warning"
+  }
+}
