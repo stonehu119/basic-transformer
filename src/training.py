@@ -3,8 +3,9 @@ import os
 from datetime import timedelta
 from miditok import REMI
 from pathlib import Path
-from random import shuffle
+from random import Random
 
+from miditok.data_augmentation import augment_dataset
 from miditok.pytorch_data import DataCollator, DatasetMIDI
 from miditok.utils import split_files_for_training
 import torch
@@ -45,13 +46,14 @@ def prepare_dataloaders(
 ) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor], REMI]:
 
     max_seq_len += 1
-    # Namespace the chunk cache by length: chunks split for a 1024 context must
-    # not be silently reused when you ask for a 2048 context (and vice versa).
-    chunks_dir = Path(f"data/chunks_{max_seq_len}")
+    # Namespace the chunk cache by length and augmentation: chunks split for a
+    # 1024 context must not be silently reused when you ask for a 2048 context,
+    # and pre-augmentation caches must not be reused either.
+    chunks_dir = Path(f"data/chunks_{max_seq_len}_aug")
     train_dir = chunks_dir / "train"
     val_dir = chunks_dir / "val"
 
-    shuffle(midi_paths)
+    Random(seed).shuffle(midi_paths)
     n = len(midi_paths)
     n_train = int(n * train_ratio)
     train_midi_paths = midi_paths[:n_train]
@@ -72,6 +74,14 @@ def prepare_dataloaders(
             save_dir=val_dir,
             max_seq_len=max_seq_len,
         )
+        # Pitch-shift augmentation on the train split only: 4 transposed copies
+        # per chunk. Val stays original so val_loss measures real generalization.
+        print("Augmenting train chunks with pitch shifts...")
+        augment_dataset(
+            data_path=train_dir,
+            pitch_offsets=[-5, -2, 2, 5],
+            save_data_aug_report=False,
+        )
         chunk_paths = _find_midi_files(chunks_dir)
     else:
         print(f"Using existing {len(chunk_paths)} chunk files in {chunks_dir}")
@@ -85,7 +95,7 @@ def prepare_dataloaders(
     bos_id = _get_special_token_id(tokenizer, "BOS_None", "BOS")
     eos_id = _get_special_token_id(tokenizer, "EOS_None", "EOS")
     pad_id = tokenizer.pad_token_id
-    if pad_id is None:
+    if pad_id is None: # type:ignore
         pad_id = _get_special_token_id(tokenizer, "PAD_None", "PAD")
     if pad_id is None:
         raise ValueError("Tokenizer has no PAD token id")
@@ -134,21 +144,16 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
 
     # ----- scaled-up model / run configuration (override any of these via env) -----
-    CONTEXT_SIZE = _env_int("CONTEXT_SIZE", 2048)
+    CONTEXT_SIZE = _env_int("CONTEXT_SIZE", 3072)
     MODEL_DIM    = _env_int("MODEL_DIM", 1024)
     NUM_LAYERS   = _env_int("NUM_LAYERS", 8)
     NUM_HEADS    = _env_int("NUM_HEADS", 16)        # head_dim = 1024 / 16 = 64
-    # Tuned for a 48GB card (A40 / A6000 / L40S) at 2048 context. If you see an
-    # OOM, drop BATCH_SIZE to 8 and raise ACCUM_STEPS to 4; on an 80GB H100/A100
-    # raise BATCH_SIZE (32-64) and set ACCUM_STEPS=1 to keep the card busy.
     BATCH_SIZE   = _env_int("BATCH_SIZE", 16)
     ACCUM_STEPS  = _env_int("ACCUM_STEPS", 2)       # effective batch = 16 * 2 = 32
     MAX_EPOCHS   = _env_int("MAX_EPOCHS", 50)
-    ES_PATIENCE  = _env_int("ES_PATIENCE", 20)      # very tolerant of plateaus
+    ES_PATIENCE  = _env_int("ES_PATIENCE", 10)
     PRECISION    = os.environ.get("PRECISION", "bf16-mixed")  # use "16-mixed" on V100/T4
 
-    # Persist to the RunPod Network Volume (/workspace) when present so
-    # checkpoints survive pod restarts; fall back to a local dir otherwise.
     default_ckpt_dir = "/workspace/checkpoints" if os.path.isdir("/workspace") else "checkpoints"
     CKPT_DIR = os.environ.get("CKPT_DIR", default_ckpt_dir)
 
@@ -196,8 +201,7 @@ if __name__ == "__main__":
         save_last=True,
         auto_insert_metric_name=False,
     )
-    # Time-based snapshot every 20 min -- crucial on interruptible/spot GPUs
-    # where the pod can vanish between validations.
+
     periodic_checkpoint = ModelCheckpoint(
         dirpath=CKPT_DIR,
         filename="periodic-{epoch:02d}-{step}",
@@ -207,8 +211,8 @@ if __name__ == "__main__":
     )
     early_stop_callback = EarlyStopping(
         monitor="val_loss",
-        patience=ES_PATIENCE,   # epochs of no >min_delta improvement before stopping
-        min_delta=1e-3,         # ignore tiny noise so plateaus must be real
+        patience=ES_PATIENCE,
+        min_delta=1e-3, # ignore tiny noise so plateaus must be real
         check_finite=True,
         verbose=True,
         mode="min"

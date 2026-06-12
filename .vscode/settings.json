@@ -4,6 +4,6 @@
   "python.analysis.generateWithTypeAnnotation": true,
   "python.analysis.diagnosticSeverityOverrides": {
     "reportUnnecessaryComparison": "warning",
-    "reportMissingTypeStubs": "warning"
+    "reportMissingTypeStubs": "information"
   }
 }
