@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 
 import kagglehub
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download # type: ignore
 from miditok import REMI, TokenizerConfig
 
 
@@ -99,11 +99,11 @@ def build_tokenizer(
 
     if train_bpe and midi_paths:
         print(f"Training BPE (vocab_size={bpe_vocab_size}) on {len(midi_paths)} files...")
-        tokenizer.train(vocab_size=bpe_vocab_size, files_paths=midi_paths)
+        tokenizer.train(vocab_size=bpe_vocab_size, files_paths=midi_paths) # type: ignore
         if save_path:
             save_path = Path(save_path)
             save_path.parent.mkdir(parents=True, exist_ok=True)
-            tokenizer.save_params(save_path)
+            tokenizer.save_params(save_path) # type: ignore
             print(f"Saved tokenizer to {save_path}")
 
     return tokenizer
