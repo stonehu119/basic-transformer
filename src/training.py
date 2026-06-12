@@ -8,10 +8,11 @@ from random import shuffle
 from miditok.pytorch_data import DataCollator, DatasetMIDI
 from miditok.utils import split_files_for_training
 import torch
-from torch.utils.data import random_split, DataLoader
+from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, TQDMProgressBar
 from lightning.pytorch.loggers import TensorBoardLogger
+from typing import cast
 
 from model import MidiLightningModule
 
@@ -25,9 +26,12 @@ def _find_midi_files(directory: Path) -> list[Path]:
 
 def _get_special_token_id(tokenizer: REMI, *candidates: str) -> int | None:
     """Return token id for the first candidate that exists in the tokenizer vocab."""
+    vocab = tokenizer.vocab
+    if not isinstance(vocab, dict):
+        return None
     for name in candidates:
-        if name in tokenizer.vocab:
-            return tokenizer.vocab[name]
+        if name in vocab:
+            return vocab[name]
     return None
 
 def prepare_dataloaders(
@@ -38,7 +42,7 @@ def prepare_dataloaders(
     num_workers: int = 0,
     train_ratio: float = 0.9,
     seed: int = 42,
-) -> tuple[DataLoader, DataLoader, REMI]:
+) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor], REMI]:
 
     max_seq_len += 1
     # Namespace the chunk cache by length: chunks split for a 1024 context must
@@ -108,21 +112,21 @@ def prepare_dataloaders(
         labels_pad_idx=-100,
     )
 
-    train_loader = DataLoader(
+    train_loader = cast(DataLoader[torch.Tensor], DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         collate_fn=collator,
         pin_memory=True,
-    )
-    val_loader = DataLoader(
+    ))
+    val_loader = cast(DataLoader[torch.Tensor], DataLoader(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collator,
-    )
+    ))
 
     return train_loader, val_loader, tokenizer
 
@@ -214,7 +218,7 @@ if __name__ == "__main__":
         max_epochs=MAX_EPOCHS,
         accelerator="auto",
         devices=1,
-        precision=PRECISION,
+        precision=PRECISION, # type: ignore
         accumulate_grad_batches=ACCUM_STEPS,
         logger=TensorBoardLogger("lightning_logs/"),
         callbacks=[
