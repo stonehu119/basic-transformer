@@ -168,7 +168,7 @@ class MidiGenerator(nn.Module):
 
     return input
 
-  def apply_mask(self, seq_len: int, attention_mask: torch.Tensor | None, device: torch.Device) -> torch.Tensor:
+  def apply_mask(self, seq_len: int, attention_mask: torch.Tensor | None, device) -> torch.Tensor:
     causal_mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
     causal_mask = causal_mask.bool().unsqueeze(0) # (1, T, T)
     if attention_mask is None: return causal_mask
