@@ -79,6 +79,7 @@ def prepare_dataloaders(
             data_path=train_dir,
             pitch_offsets=[-5, 5],
             velocity_offsets=[-4, 4],
+            duration_offsets=[],
             save_data_aug_report=False,
         )
         chunk_paths = _find_midi_files(chunks_dir)
