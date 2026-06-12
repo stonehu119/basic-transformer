@@ -3,6 +3,7 @@
   "python.analysis.autoFormatStrings": true,
   "python.analysis.generateWithTypeAnnotation": true,
   "python.analysis.diagnosticSeverityOverrides": {
-    "reportUnnecessaryComparison": "warning"
+    "reportUnnecessaryComparison": "warning",
+    "reportMissingTypeStubs": "warning"
   }
 }
