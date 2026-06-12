@@ -74,12 +74,11 @@ def prepare_dataloaders(
             save_dir=val_dir,
             max_seq_len=max_seq_len,
         )
-        # Pitch-shift augmentation on the train split only: 4 transposed copies
-        # per chunk. Val stays original so val_loss measures real generalization.
         print("Augmenting train chunks with pitch shifts...")
         augment_dataset(
             data_path=train_dir,
-            pitch_offsets=[-5, -2, 2, 5],
+            pitch_offsets=[-5, 5],
+            velocity_offsets=[-4, 4],
             save_data_aug_report=False,
         )
         chunk_paths = _find_midi_files(chunks_dir)
@@ -95,7 +94,7 @@ def prepare_dataloaders(
     bos_id = _get_special_token_id(tokenizer, "BOS_None", "BOS")
     eos_id = _get_special_token_id(tokenizer, "EOS_None", "EOS")
     pad_id = tokenizer.pad_token_id
-    if pad_id is None: # type:ignore
+    if pad_id is None: # type: ignore
         pad_id = _get_special_token_id(tokenizer, "PAD_None", "PAD")
     if pad_id is None:
         raise ValueError("Tokenizer has no PAD token id")
