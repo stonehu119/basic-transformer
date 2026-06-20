@@ -45,11 +45,12 @@ class AttnHead(nn.Module):
     return out, weights
 
 class MultiHeadAttn(nn.Module):
-  def __init__(self, model_dim: int = 256, num_heads: int = 4):
+  def __init__(self, model_dim: int = 256, num_heads: int = 4, dropout: float = 0.1):
     super().__init__()
     assert model_dim % num_heads == 0
     self.num_heads = num_heads
     self.attn_dim = model_dim // num_heads # also known as head_dim
+    self.attn_dropout = dropout
 
     # need to project input (B, T, model_dim) into (B, T, 3*model_dim), 3x because one for q, k, v
     self.qkv = nn.Linear(in_features=model_dim, out_features=3*model_dim)
@@ -74,7 +75,10 @@ class MultiHeadAttn(nn.Module):
     # mask starts as (B, T, T). We need to project it into a shape that is broadcastable to (B, num_heads, T, T)
     mask = None if mask is None else mask.unsqueeze(1)
 
-    attn_out = F.scaled_dot_product_attention(Q, k, v, attn_mask=mask) # 1 tensor (B, num_heads, T, attn_dim)
+    attn_out = F.scaled_dot_product_attention(
+      Q, k, v, attn_mask=mask,
+      dropout_p=self.attn_dropout if self.training else 0.0,
+    ) # 1 tensor (B, num_heads, T, attn_dim)
     de_permuted = attn_out.permute(0, 2, 1, 3) # (B, T, num_heads, attn_dim)
     out = de_permuted.reshape(B, T, model_dim)
     return self.out_layer(out), new_cache
@@ -113,6 +117,7 @@ class MidiGenerator(nn.Module):
     self.context_size = context_size
     self.embedding = nn.Embedding(vocab_size, model_dim)
     self.positional = nn.Embedding(context_size, model_dim)
+    self.emb_dropout = nn.Dropout(p=0.1)
     self.transformers = nn.ModuleList([TransformerBlock(model_dim=model_dim, num_heads=num_heads) for _ in range(num_layers)])
     self.output = nn.Linear(model_dim, vocab_size, bias=False)
     self.output.weight = self.embedding.weight
@@ -123,7 +128,7 @@ class MidiGenerator(nn.Module):
     embeddings = self.embedding(input) # (B, T, model_dim)
     T = input.size(1)
     position_offsets = torch.arange(T, device=device).unsqueeze(0)
-    embeddings = embeddings + self.positional(position_offsets)
+    embeddings = self.emb_dropout(embeddings + self.positional(position_offsets))
 
     mask = self.apply_mask(T, attention_mask, input.device)
 
@@ -163,7 +168,7 @@ class MidiGenerator(nn.Module):
 
     return input
 
-  def apply_mask(self, seq_len: int, attention_mask: torch.Tensor | None, device: torch.Device) -> torch.Tensor:
+  def apply_mask(self, seq_len: int, attention_mask: torch.Tensor | None, device) -> torch.Tensor:
     causal_mask = torch.tril(torch.ones(seq_len, seq_len, device = device))
     causal_mask = causal_mask.bool().unsqueeze(0) # (1, T, T)
     if attention_mask is None: return causal_mask
@@ -249,21 +254,22 @@ class MidiLightningModule(L.LightningModule):
   def forward(self, input: torch.Tensor, attention_mask: torch.Tensor | None = None):
     return self.model(input, attention_mask)
   
-  def _forward_loss(self, batch: Batch):
+  def _forward_loss(self, batch: Batch, label_smoothing: float = 0.0):
     input_token_batch = batch["input_ids"] # (B, T)
     label_token_batch = batch["labels"] # (B, T)
     attention_mask = batch["attention_mask"] # (B, T)
 
     logit_batch = self(input_token_batch, attention_mask) # (B, T, vocab_size)
-    
-    loss = F.cross_entropy( 
+
+    loss = F.cross_entropy(
       logit_batch.reshape(-1, self.vocab_size),
-      label_token_batch.reshape(-1) # apparently F.cross_entropy one hot encodes these already
+      label_token_batch.reshape(-1), # apparently F.cross_entropy one hot encodes these already
+      label_smoothing=label_smoothing,
     )
     return loss
 
   def training_step(self, batch: Batch):
-    loss = self._forward_loss(batch)
+    loss = self._forward_loss(batch, label_smoothing=0.1)
 
     self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
     return loss
